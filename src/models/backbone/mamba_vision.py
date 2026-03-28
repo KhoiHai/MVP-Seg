@@ -45,7 +45,7 @@ if __name__ == "__main__":
     model = MambaVision("nvidia/MambaVision-T-1K", pretrained = True).to(device)
     model.eval()
 
-    img_path = "./data/bear.jpeg"
+    img_path = "/content/MVP-Seg/data/bear.jpeg"
     image = Image.open(img_path).convert("RGB")
 
     transform = create_transform(
