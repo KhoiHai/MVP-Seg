@@ -19,7 +19,7 @@ class MambaVision(nn.Module):
         '''
         super().__init__()
 
-        # This follows the instruction from HuggingFace https://huggingface.co/nvidia/MambaVision-S-1K
+        # This follows the instruction from HuggingFace https://huggingface.co/nvidia/MambaVision-T-1K
         self.model = AutoModel.from_pretrained(
             model_name,
             trust_remote_code = True
@@ -32,11 +32,15 @@ class MambaVision(nn.Module):
         out_avg_pool, features = self.model(x)
 
         return features
-    
-if __name__ == "__main__":
-    from PIL import Image
-    from timm.data.transforms_factory import create_transform
 
+# ------------------------------
+# BACKBONE TESTING
+# ------------------------------     
+from PIL import Image
+from timm.data.transforms_factory import create_transform
+from src.utils.plot_feature_map import plot_feature_map
+
+def test_backbone():
     '''
     Script for testing MambaVision backbone loading
     '''
@@ -59,12 +63,13 @@ if __name__ == "__main__":
 
     x = transform(image).unsqueeze(0).to(device)
 
-    # ===== Forward =====
+    # Fowarding
     with torch.no_grad():
         features = model(x)
 
-    # ===== Print result =====
+    # Print the feature size
     print("Input shape:", x.shape)
 
     for i, f in enumerate(features):
         print(f"Stage {i+1}: {f.shape}")
+        plot_feature_map(f[i])
