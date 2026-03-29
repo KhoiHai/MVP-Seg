@@ -28,6 +28,10 @@ class MambaVision(nn.Module):
     def forward(self,x):
         '''
         Return the extracted features from the input x in every 4 stages 
+            Stage 1: [batch_size, C, H/4, W/4]
+            Stage 2: [batch_size, 2C, H/8, W/8]
+            Stage 3: [batch_size, 4C, H/16, W/16]
+            Stage 4: [batch_size, 8C, H/32, W/32]
         '''
         out_avg_pool, features = self.model(x)
 
