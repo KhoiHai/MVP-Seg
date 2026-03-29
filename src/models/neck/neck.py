@@ -108,7 +108,7 @@ class PANet_Neck(nn.Module):
         return [N2, N3, N4]
     
 # ------------------------------
-# NECK TESTING
+# NECK TESTING CODE
 # ------------------------------   
 from src.models.backbone.mamba_vision import MambaVision
 from PIL import Image
