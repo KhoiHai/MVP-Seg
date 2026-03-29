@@ -129,7 +129,7 @@ def test_neck(model_name="nvidia/MambaVision-T-1K", pretrained=True):
     neck.eval()
 
     # Image
-    img_path = "/content/MVP-Seg/data/bear.jpeg"
+    img_path = "data/bear.jpeg"
     image = Image.open(img_path).convert("RGB")
 
     transform = create_transform(
