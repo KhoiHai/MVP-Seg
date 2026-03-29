@@ -31,5 +31,5 @@ class Protonet(nn.Module):
         )
 
     def forward(self, x):
-        x = self.prot(x)
+        x = self.proto(x)
         return x
