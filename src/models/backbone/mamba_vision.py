@@ -40,13 +40,13 @@ from PIL import Image
 from timm.data.transforms_factory import create_transform
 from src.utils.plot_feature_map import plot_feature_map
 
-def test_backbone():
+def test_backbone(model_name = "nvidia/MambaVision-T-1K", pretrained = True):
     '''
     Script for testing MambaVision backbone loading
     '''
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    model = MambaVision("nvidia/MambaVision-T-1K", pretrained = True).to(device)
+    model = MambaVision(model_name = model_name, pretrained = pretrained).to(device)
     model.eval()
 
     img_path = "/content/MVP-Seg/data/bear.jpeg"
@@ -73,3 +73,6 @@ def test_backbone():
     for i, f in enumerate(features):
         print(f"Stage {i+1}: {f.shape}")
         plot_feature_map(f[i])
+
+if __name__ == '__main__':
+    test_backbone(model_name = "nvidia/MambaVision-T-1K", pretrained = True)
