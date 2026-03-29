@@ -72,7 +72,7 @@ def test_backbone(model_name = "nvidia/MambaVision-T-1K", pretrained = True):
 
     for i, f in enumerate(features):
         print(f"Stage {i+1}: {f.shape}")
-        plot_feature_map(f[i])
+        plot_feature_map(f)
 
 if __name__ == '__main__':
     test_backbone(model_name = "nvidia/MambaVision-T-1K", pretrained = True)
