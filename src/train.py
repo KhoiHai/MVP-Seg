@@ -4,7 +4,7 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from src.models.mvp_seg import MVP_Seg
-from src.dataset.coco_dataset import get_dataloaders
+from src.dataset.coco_dataset import get_coco_dataloaders
 from src.models.loss import Model_Loss
 
 def move_targets_to_device(targets, device):
@@ -23,7 +23,7 @@ def train(config):
     # -------------------------
     # DATA
     # -------------------------
-    train_loader, val_loader = get_dataloaders(
+    train_loader, val_loader = get_coco_dataloaders(
         data_root=config["data_root"],
         batch_size=config["batch_size"],
         num_workers=config["num_workers"],

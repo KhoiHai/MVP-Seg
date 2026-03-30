@@ -179,7 +179,7 @@ def collate_fn(batch):
     return images, targets
 
 
-def get_dataloaders(data_root, batch_size = 5, num_workers = 2,
+def get_coco_dataloaders(data_root, batch_size = 5, num_workers = 2,
                     subset_size = 10000, img_size = 550):
     '''
     Build train and val DataLoaders for COCO subset training

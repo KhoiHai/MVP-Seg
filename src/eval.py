@@ -7,7 +7,7 @@ from pycocotools.cocoeval import COCOeval
 from torchvision.ops import nms
 
 from src.models.mvp_seg import MVP_Seg
-from src.dataset.coco_dataset import get_dataloaders
+from src.dataset.coco_dataset import get_coco_dataloaders
 from src.utils.flatten_predictions import flatten_predictions
 
 
@@ -82,7 +82,7 @@ def evaluate(model_path, data_root, num_classes=80, device=None):
 
     print(f"Loaded weights from: {model_path}")
 
-    _, val_loader = get_dataloaders(
+    _, val_loader = get_coco_dataloaders(
         data_root=data_root,
         batch_size=1,
         num_workers=2,
