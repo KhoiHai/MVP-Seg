@@ -33,9 +33,19 @@ class MVP_Seg(nn.Module):
         self.pred_head = Prediction_Head(in_channels = shared_channel, num_classes = num_classes, num_prototypes = num_prototypes)
 
         # Protonet
-        self.proto = Protonet(in_channels = shared_channel, num_protypes = num_prototypes)
+        self.proto = Protonet(in_channels = shared_channel, num_prototypes = num_prototypes)
     
     def forward(self, x):
+        '''
+        Args:
+            x: Input image batch [batch_size, 3, H, W]
+        Returns:
+            dict with keys:
+                cls: list of [batch_size, num_classes, Hi, Wi] for each scale
+                box: list of [batch_size, 4, Hi, Wi] for each scale
+                coef: list of [batch_size, num_prototypes, Hi, Wi] for each scale
+                proto: [batch_size, num_prototypes, H/4, W/4]
+        '''
         # Backbone
         features = self.backbone(x)
         C2, C3, C4 = features[1], features[2], features[3]
