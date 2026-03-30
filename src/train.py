@@ -5,6 +5,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from src.models.mvp_seg import MVP_Seg
 from src.dataset.coco_dataset import get_coco_dataloaders
+from src.dataset.sbd_dataset import get_sbd_dataloaders
 from src.models.loss import Model_Loss
 
 def move_targets_to_device(targets, device):
@@ -23,7 +24,7 @@ def train(config):
     # -------------------------
     # DATA
     # -------------------------
-    train_loader, val_loader = get_coco_dataloaders(
+    train_loader, val_loader = get_sbd_dataloaders(
         data_root=config["data_root"],
         batch_size=config["batch_size"],
         num_workers=config["num_workers"],
@@ -95,7 +96,7 @@ def train(config):
             optimizer = Adam([
                 {"params": model.backbone.parameters(), "lr": config["lr"] * 0.1},
                 {"params": model.neck.parameters()},
-                {"params": model.protonet.parameters()},
+                {"params": model.proto.parameters()},
                 {"params": model.pred_head.parameters()},
             ], lr=config["lr"], weight_decay=config["weight_decay"])
 
