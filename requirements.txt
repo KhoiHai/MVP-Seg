@@ -1,4 +1,5 @@
 # torch và torchvision không cần cài, Colab đã có sẵn
+albumentations
 # causal-conv1d và mamba-ssm cài riêng bằng wheel (để vô README)
 
 transformers==4.47.0
