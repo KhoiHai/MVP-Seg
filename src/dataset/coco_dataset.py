@@ -79,24 +79,29 @@ class COCODataset(Dataset):
 
         boxes  = np.array(boxes,  dtype = np.float32)                    # [N, 4]
         labels = np.array(labels, dtype = np.int64)                      # [N]
-        masks  = np.stack(masks,  axis = 0).astype(np.float32)           # [N, H, W]
+        # --- mask fix ---
+        mask = (self.coco.annToMask(ann) > 0).astype(np.float32)
 
-        # Apply augmentations (albumentations transforms box + mask jointly with image)
+        # --- transform ---
         if self.transforms:
-            mask_list = [masks[i] for i in range(masks.shape[0])]        # list of [H, W]
+            mask_list = [masks[i] for i in range(masks.shape[0])]
+
             transformed = self.transforms(
-                image = image,
-                bboxes = boxes.tolist(),
-                bbox_labels = labels.tolist(),
-                masks = mask_list
+                image=image,
+                bboxes=boxes.tolist(),
+                bbox_labels=labels.tolist(),
+                masks=mask_list
             )
-            image  = transformed["image"] # Tensor [3, H, W]
-            boxes  = torch.tensor(transformed["bboxes"], dtype = torch.float32)
-            labels = torch.tensor(transformed["bbox_labels"], dtype = torch.int64)
-            masks  = torch.stack([
-                torch.tensor(m, dtype = torch.float32)
-                for m in transformed["masks"]
-            ]) # [N, H, W]
+
+            if len(transformed["bboxes"]) == 0:
+                return None
+
+            image = transformed["image"]
+
+            boxes = torch.tensor(transformed["bboxes"], dtype=torch.float32)
+            labels = torch.tensor(transformed["bbox_labels"], dtype=torch.int64)
+
+            masks = torch.from_numpy(np.stack(transformed["masks"])).float()
         else:
             # Fallback: convert to tensor manually without augmentation
             image = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
