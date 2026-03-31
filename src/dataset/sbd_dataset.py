@@ -98,11 +98,12 @@ def collate_fn(batch):
     } for b in batch]
     return images, targets
 
-def get_sbd_dataloaders(root="datasets/SBD", batch_size=4, num_workers=2, img_size=550, verbose=True, val_split=0.1):
+def get_sbd_dataloaders(root="datasets/SBD", batch_size=4, num_workers=2, img_size=550, verbose=True, val_split=0.1, cache_dir="cache"):
     import albumentations as A
     from albumentations.pytorch import ToTensorV2
     import random
     from tqdm import tqdm
+    os.makedirs(cache_dir, exist_ok=True)
 
     # -------------------------
     # Transforms
@@ -123,7 +124,7 @@ def get_sbd_dataloaders(root="datasets/SBD", batch_size=4, num_workers=2, img_si
     ])
 
     # -------------------------
-    # Tách train/val từ train_noval
+    # Split train/val if needed
     # -------------------------
     train_noval_file = os.path.join(root, "train_noval.txt")
     train_file = os.path.join(root, "train.txt")
@@ -144,26 +145,59 @@ def get_sbd_dataloaders(root="datasets/SBD", batch_size=4, num_workers=2, img_si
             print(f"[INFO] Created train.txt ({len(train_imgs)} images) and val.txt ({len(val_imgs)} images)")
 
     # -------------------------
-    # Load SBInstanceDataset
+    # Cache file paths
     # -------------------------
-    if verbose:
-        print("[INFO] Creating SBInstanceDataset objects...")
-    train_dataset = SBInstanceDataset(root=root, image_set="train", transforms=train_transform, verbose=False)
-
-    print("[INFO] Loading all train images with progress:")
-    for i in tqdm(range(len(train_dataset))):
-        _ = train_dataset[i]  # chỉ để chạy và thấy tiến trình
-
-    val_dataset   = SBInstanceDataset(root=root, image_set="val", transforms=val_transform, verbose=False)
+    train_cache = os.path.join(cache_dir, f"train_{img_size}.pt")
+    val_cache   = os.path.join(cache_dir, f"val_{img_size}.pt")
 
     # -------------------------
-    # DataLoaders
+    # Load or create cached dataset
     # -------------------------
-    if verbose:
-        print("[INFO] Creating DataLoaders...")
+    def create_cache(dataset, cache_path, transform):
+        data_list = []
+        for idx in tqdm(range(len(dataset)), desc=f"Processing {os.path.basename(cache_path)}"):
+            item = dataset[idx]
+            # Apply transforms if needed
+            if transform:
+                transformed = transform(image=item["image"].permute(1,2,0).numpy())
+                item["image"] = transformed["image"]
+            data_list.append(item)
+        torch.save(data_list, cache_path)
+        return data_list
+
+    if os.path.exists(train_cache):
+        if verbose:
+            print(f"[CACHE] Loading train data from {train_cache}")
+        train_data = torch.load(train_cache)
+    else:
+        if verbose:
+            print(f"[CACHE] Creating train cache at {train_cache}")
+        train_dataset = SBInstanceDataset(root=root, image_set="train", transforms=None, verbose=False)
+        train_data = create_cache(train_dataset, train_cache, train_transform)
+
+    if os.path.exists(val_cache):
+        if verbose:
+            print(f"[CACHE] Loading val data from {val_cache}")
+        val_data = torch.load(val_cache)
+    else:
+        if verbose:
+            print(f"[CACHE] Creating val cache at {val_cache}")
+        val_dataset = SBInstanceDataset(root=root, image_set="val", transforms=None, verbose=False)
+        val_data = create_cache(val_dataset, val_cache, val_transform)
+
+    # -------------------------
+    # Dataset wrapper to return cached items
+    # -------------------------
+    class CachedDataset(Dataset):
+        def __init__(self, data_list):
+            self.data_list = data_list
+        def __len__(self):
+            return len(self.data_list)
+        def __getitem__(self, idx):
+            return self.data_list[idx]
 
     train_loader = DataLoader(
-        train_dataset,
+        CachedDataset(train_data),
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
@@ -171,22 +205,13 @@ def get_sbd_dataloaders(root="datasets/SBD", batch_size=4, num_workers=2, img_si
         pin_memory=True
     )
     val_loader = DataLoader(
-        val_dataset,
+        CachedDataset(val_data),
         batch_size=1,
         shuffle=False,
         num_workers=num_workers,
         collate_fn=collate_fn,
         pin_memory=True
     )
-
-    # -------------------------
-    # Progress log cho train loader
-    # -------------------------
-    if verbose:
-        print("[INFO] Iterating through train_loader to show progress...")
-        for i, (images, targets) in enumerate(tqdm(train_loader, desc="Loading train batches")):
-            if i >= 5:  # chỉ hiển thị 5 batch đầu để demo
-                break
 
     if verbose:
         print(f"[INFO] Train batches: {len(train_loader)} | Val batches: {len(val_loader)}")
