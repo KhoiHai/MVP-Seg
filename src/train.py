@@ -22,14 +22,14 @@ def train(config):
     print(f"Training on: {device}")
 
     # -------------------------
-    # DATA
+    # DATA (FIXED)
     # -------------------------
     train_loader, val_loader = get_sbd_dataloaders(
-        data_root=config["data_root"],
+        root=config["data_root"],   # ✅ FIX
         batch_size=config["batch_size"],
-        num_workers=config["num_workers"],
-        subset_size=config["subset_size"]
+        num_workers=config["num_workers"]
     )
+
     print(f"Train batches: {len(train_loader)} | Val batches: {len(val_loader)}")
 
     # -------------------------
@@ -44,6 +44,7 @@ def train(config):
     # Freeze backbone
     for param in model.backbone.parameters():
         param.requires_grad = False
+
     print(f"Backbone frozen for {config['warmup_epochs']} epochs")
 
     # -------------------------
@@ -52,41 +53,36 @@ def train(config):
     optimizer = Adam(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=config["lr"],
-        betas=(0.9, 0.999),
         weight_decay=config["weight_decay"]
     )
-
     scheduler = CosineAnnealingLR(optimizer, T_max=config["epochs"])
-
     criterion = Model_Loss(num_classes=config["num_classes"])
-
-    # AMP (mixed precision)
     scaler = torch.cuda.amp.GradScaler(enabled=(device == "cuda"))
 
     # -------------------------
-    # RESUME
+    # RESUME CHECKPOINT
     # -------------------------
     start_epoch = 0
     best_loss = float("inf")
-
-    if config.get("resume") and os.path.exists(config["resume"]):
-        ckpt = torch.load(config["resume"], map_location=device)
-        model.load_state_dict(ckpt["model"])
-        optimizer.load_state_dict(ckpt["optimizer"])
-        start_epoch = ckpt["epoch"] + 1
-        best_loss = ckpt.get("loss", float("inf"))
-        print(f"Resumed from epoch {start_epoch}, loss {best_loss:.4f}")
-
-    os.makedirs(config["save_dir"], exist_ok=True)
+    if config.get("resume") and os.path.exists(config["resume_path"]):
+        checkpoint = torch.load(config["resume_path"], map_location=device)
+        if "model_state" in checkpoint:
+            model.load_state_dict(checkpoint["model_state"])
+            optimizer.load_state_dict(checkpoint["optimizer_state"])
+            scaler.load_state_dict(checkpoint["scaler_state"])
+            start_epoch = checkpoint["epoch"] + 1
+            best_loss = checkpoint["best_loss"]
+            print(f"✅ Resumed training from {config['resume_path']} at epoch {start_epoch}")
+        else:  # chỉ load model_state_dict
+            model.load_state_dict(checkpoint)
+            print(f"✅ Loaded pretrained model from {config['resume_path']}")
 
     # -------------------------
     # TRAIN LOOP
     # -------------------------
-    for epoch in range(start_epoch, config["epochs"]):
+    for epoch in range(config["epochs"]):
 
-        # -------------------------
-        # UNFREEZE BACKBONE
-        # -------------------------
+        # UNFREEZE
         if epoch == config["warmup_epochs"]:
             print(f"\nEpoch {epoch+1}: Unfreezing backbone")
 
@@ -100,7 +96,6 @@ def train(config):
                 {"params": model.pred_head.parameters()},
             ], lr=config["lr"], weight_decay=config["weight_decay"])
 
-            # FIX: scheduler reset đúng
             scheduler = CosineAnnealingLR(
                 optimizer,
                 T_max=config["epochs"] - epoch
@@ -109,35 +104,37 @@ def train(config):
         model.train()
         total_loss = 0.0
 
-        # -------------------------
-        # LR WARMUP (REAL)
-        # -------------------------
+        # LR warmup
         if epoch < config["warmup_epochs"]:
             warmup_factor = (epoch + 1) / config["warmup_epochs"]
             for g in optimizer.param_groups:
                 g["lr"] = config["lr"] * warmup_factor
 
+        # -------------------------
+        # TRAIN STEP
+        # -------------------------
         for batch_idx, batch in enumerate(train_loader):
+
             if batch is None:
                 continue
 
             images, targets = batch
+
             images = images.to(device)
+
+            # ✅ FIX LABEL (SBD: 1-20 → 0-19)
+            for t in targets:
+                t["labels"] = t["labels"] - 1
+
             targets = move_targets_to_device(targets, device)
 
             optimizer.zero_grad()
 
-            # -------------------------
-            # FORWARD (AMP)
-            # -------------------------
             with torch.cuda.amp.autocast(enabled=(device == "cuda")):
                 outputs = model(images)
                 loss_dict = criterion(outputs, targets)
                 loss = loss_dict["loss"]
 
-            # -------------------------
-            # BACKWARD
-            # -------------------------
             scaler.scale(loss).backward()
 
             torch.nn.utils.clip_grad_norm_(
@@ -163,13 +160,7 @@ def train(config):
         avg_loss = total_loss / max(len(train_loader), 1)
         scheduler.step()
 
-        current_lr = optimizer.param_groups[0]["lr"]
-
-        print(
-            f"\nEpoch {epoch+1} summary | "
-            f"Train Loss: {avg_loss:.4f} | "
-            f"LR: {current_lr:.6f}"
-        )
+        print(f"\nEpoch {epoch+1} | Train Loss: {avg_loss:.4f}")
 
         # -------------------------
         # VALIDATION
@@ -179,11 +170,17 @@ def train(config):
 
         with torch.no_grad():
             for batch in val_loader:
+
                 if batch is None:
                     continue
 
                 images, targets = batch
                 images = images.to(device)
+
+                # ✅ FIX LABEL VAL
+                for t in targets:
+                    t["labels"] = t["labels"] - 1
+
                 targets = move_targets_to_device(targets, device)
 
                 outputs = model(images)
@@ -192,53 +189,55 @@ def train(config):
                 val_loss += loss_dict["loss"].item()
 
         val_loss /= max(len(val_loader), 1)
-
         print(f"Validation Loss: {val_loss:.4f}")
 
         # -------------------------
         # SAVE
         # -------------------------
-        ckpt_path = os.path.join(config["save_dir"], f"epoch_{epoch+1}.pth")
+        os.makedirs(config["save_dir"], exist_ok=True)
+        checkpoint_path = os.path.join(config["save_dir"], f"epoch_{epoch+1}.pth")
         torch.save({
             "epoch": epoch,
-            "model": model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "loss": avg_loss
-        }, ckpt_path)
+            "model_state": model.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+            "scaler_state": scaler.state_dict(),
+            "best_loss": best_loss
+        }, checkpoint_path)
 
-        # Save best (based on val)
         if val_loss < best_loss:
             best_loss = val_loss
-            torch.save(
-                model.state_dict(),
-                os.path.join(config["save_dir"], "best.pth")
-            )
-            print(f"Best model saved (val loss: {best_loss:.4f})")
-
+            torch.save({
+                "epoch": epoch,
+                "model_state": model.state_dict(),
+                "optimizer_state": optimizer.state_dict(),
+                "scaler_state": scaler.state_dict(),
+                "best_loss": best_loss
+            }, os.path.join(config["save_dir"], "best.pth"))
+            print(f"🔥 Best model saved: {best_loss:.4f}")
 
 # ------------------------------
 # CONFIG
 # ------------------------------
 if __name__ == "__main__":
     config = {
-        "data_root": "data/coco",
-        "save_dir": "checkpoints",
+    "data_root": "/content/SBD",   # ✅ FIX
+    "save_dir": "checkpoints",
 
-        "backbone": "nvidia/MambaVision-T-1K",
-        "num_classes": 80,
-        "num_prototypes": 32,
+    "backbone": "nvidia/MambaVision-T-1K",
+    "num_classes": 20,             # ✅ FIX (SBD)
+    "num_prototypes": 32,
 
-        "batch_size": 4,       
-        "num_workers": 2,
-        "subset_size": 100,   
+    "batch_size": 2,             
+    "num_workers": 2,
 
-        "lr": 1e-4,
-        "weight_decay": 1e-4,
+    "lr": 1e-4,
+    "weight_decay": 1e-4,
 
-        "epochs": 30,
-        "warmup_epochs": 3,
+    "epochs": 10,
+    "warmup_epochs": 3,
 
-        "resume": None,
+    "resume": False,
+    "resume_path": "checkpoints/best.pth",
     }
 
     train(config)

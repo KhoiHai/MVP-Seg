@@ -12,7 +12,7 @@ class MVP_Seg(nn.Module):
     Final architecture of MVP_Seg
     '''
     def __init__(self, model_name = "nvidia/MambaVision-T-1K", pretrained = True, 
-                 shared_channel = 224, num_classes = 80, num_prototypes = 32):
+                 shared_channel = 256, num_classes = 80, num_prototypes = 32):
         '''
         Args: 
             model_name: The name type of MambaVision model

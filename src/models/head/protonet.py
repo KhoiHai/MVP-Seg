@@ -8,7 +8,7 @@ class Protonet(nn.Module):
     '''
     Protonet for prototype generation
     '''
-    def __init__(self, in_channels = 256, norm = "bn", act = "relu", num_protypes = 32):
+    def __init__(self, in_channels = 256, norm = "bn", act = "relu", num_prototypes = 32):
         '''
         in_channels: The channel of N2 feature map
         norm: Normalization layer
@@ -27,7 +27,7 @@ class Protonet(nn.Module):
             ConvNormAct(256, 256, 3, p = 1),
             ConvNormAct(256, 256, 3, p = 1),
 
-            nn.Conv2d(256, num_protypes, 1)
+            nn.Conv2d(256, num_prototypes, 1)
         )
 
     def forward(self, x):

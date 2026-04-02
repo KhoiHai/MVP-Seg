@@ -35,23 +35,34 @@ def focal_loss(logits, targets, alpha=0.25, gamma=2.0):
 
 
 # -------------------------
-# IOU LOSS (FCOS LTRB)
+# GIOU LOSS (FCOS LTRB)
 # -------------------------
-def iou_loss(pred, target):
-    eps = 1e-6
+def giou_loss(pred, target, eps=1e-7):
+    # pred, target: [N, 4] LTRB
+    x1p, y1p, x2p, y2p = pred[:,0], pred[:,1], pred[:,0]+pred[:,2], pred[:,1]+pred[:,3]
+    x1t, y1t, x2t, y2t = target[:,0], target[:,1], target[:,0]+target[:,2], target[:,1]+target[:,3]
 
-    inter_w = torch.min(pred[:, 0], target[:, 0]) + torch.min(pred[:, 2], target[:, 2])
-    inter_h = torch.min(pred[:, 1], target[:, 1]) + torch.min(pred[:, 3], target[:, 3])
+    inter_x1 = torch.max(x1p, x1t)
+    inter_y1 = torch.max(y1p, y1t)
+    inter_x2 = torch.min(x2p, x2t)
+    inter_y2 = torch.min(y2p, y2t)
 
-    inter = inter_w.clamp(min=0) * inter_h.clamp(min=0)
+    inter_area = (inter_x2 - inter_x1).clamp(min=0) * (inter_y2 - inter_y1).clamp(min=0)
+    pred_area = (x2p - x1p) * (y2p - y1p)
+    gt_area   = (x2t - x1t) * (y2t - y1t)
+    union_area = pred_area + gt_area - inter_area
 
-    area_p = (pred[:, 0] + pred[:, 2]) * (pred[:, 1] + pred[:, 3])
-    area_t = (target[:, 0] + target[:, 2]) * (target[:, 1] + target[:, 3])
+    iou = inter_area / (union_area + eps)
 
-    union = area_p + area_t - inter
-    iou = inter / (union + eps)
+    # Enclosing box
+    enclose_x1 = torch.min(x1p, x1t)
+    enclose_y1 = torch.min(y1p, y1t)
+    enclose_x2 = torch.max(x2p, x2t)
+    enclose_y2 = torch.max(y2p, y2t)
+    enclose_area = (enclose_x2 - enclose_x1) * (enclose_y2 - enclose_y1) + eps
 
-    return (1 - iou).sum()
+    giou = iou - (enclose_area - union_area) / enclose_area
+    return (1 - giou).sum()
 
 
 # -------------------------
@@ -90,8 +101,21 @@ class Model_Loss(nn.Module):
             matched_idx, pos_mask = match_locations(locations, gt_boxes)
 
             n_pos = pos_mask.sum().item()
-            total_num_pos += n_pos
 
+            max_masks = 100  # 🔥 chỉnh số này (50–200 tùy GPU)
+
+            if n_pos > max_masks:
+                pos_idx = torch.where(pos_mask)[0]
+                perm = torch.randperm(n_pos, device=pos_idx.device)[:max_masks]
+                selected = pos_idx[perm]
+
+                new_pos_mask = torch.zeros_like(pos_mask)
+                new_pos_mask[selected] = True
+
+                pos_mask = new_pos_mask
+                n_pos = max_masks
+
+            total_num_pos += n_pos
             # -------------------------
             # CLASSIFICATION
             # -------------------------
@@ -119,7 +143,7 @@ class Model_Loss(nn.Module):
 
             target_ltrb = torch.stack([l, t, r, b], dim=1).clamp(min=0)
 
-            all_box_loss += iou_loss(pos_box_preds, target_ltrb)
+            all_box_loss += giou_loss(pos_box_preds, target_ltrb)
 
             # -------------------------
             # MASK LOSS
@@ -128,8 +152,8 @@ class Model_Loss(nn.Module):
             P, p_h, p_w = proto.shape[1:]
 
             # generate masks
-            pred_masks = torch.sigmoid(pos_coefs @ proto[i].view(P, -1))
-            pred_masks = pred_masks.view(-1, p_h, p_w)
+            mask_logits = pos_coefs @ proto[i].view(P, -1)
+            mask_logits = mask_logits.view(-1, p_h, p_w)
 
             # resize GT masks
             target_masks = F.interpolate(
@@ -150,8 +174,8 @@ class Model_Loss(nn.Module):
 
             # tạo mask crop
             y_coords, x_coords = torch.meshgrid(
-                torch.arange(p_h, device=pred_masks.device),
-                torch.arange(p_w, device=pred_masks.device),
+                torch.arange(p_h, device=mask_logits.device),
+                torch.arange(p_w, device=mask_logits.device),
                 indexing='ij'
             )
 
@@ -165,7 +189,11 @@ class Model_Loss(nn.Module):
                 (y_coords <= scaled_boxes[:, 3].view(-1,1,1))
             )
 
-            mask_bce = F.binary_cross_entropy(pred_masks, target_masks, reduction='none')
+            mask_bce = F.binary_cross_entropy_with_logits(
+                mask_logits,
+                target_masks,
+                reduction='none'
+            )
 
             all_mask_loss += (mask_bce * box_mask.float()).sum() / box_mask.float().sum().clamp(min=1.0)
 
