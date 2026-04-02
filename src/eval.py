@@ -9,6 +9,7 @@ from torchvision.ops import nms
 from src.models.mvp_seg import MVP_Seg
 from src.dataset.coco_dataset import get_coco_dataloaders
 from src.utils.flatten_predictions import flatten_predictions
+from src.train import move_targets_to_device
 
 
 def decode_predictions(outputs, top_k=200, nms_thresh=0.5, mask_thresh=0.5):
@@ -162,6 +163,63 @@ def evaluate(model_path, data_root, num_classes=80, device=None):
     print(f"\n===== SPEED =====")
     print(f"Average FPS : {np.mean(fps_list):.1f}")
     print(f"Median  FPS : {np.median(fps_list):.1f}")
+
+@torch.no_grad()
+def evaluate_model(model, val_loader, coco_gt, device):
+
+    model.eval()
+    coco_preds = []
+
+    for batch in val_loader:
+        if batch is None:
+            continue
+
+        images, targets = batch
+        images = images.to(device)
+        targets = move_targets_to_device(targets, device)
+
+        outputs = model(images)
+        detections = decode_predictions(outputs)
+
+        for det, tgt in zip(detections, targets):
+            img_id = tgt["img_id"]
+            if isinstance(img_id, torch.Tensor):
+                img_id = int(img_id.item())
+
+            boxes  = det["boxes"].cpu().numpy()
+            scores = det["scores"].cpu().numpy()
+            labels = det["labels"].cpu().numpy()
+
+            for j in range(len(scores)):
+                x1, y1, x2, y2 = boxes[j]
+
+                coco_preds.append({
+                    "image_id": img_id,
+                    "category_id": int(labels[j]) + 1,
+                    "bbox": [
+                        float(x1),
+                        float(y1),
+                        float(x2 - x1),
+                        float(y2 - y1)
+                    ],
+                    "score": float(scores[j])
+                })
+
+    if len(coco_preds) == 0:
+        return 0.0, 0.0
+
+    coco_dt   = coco_gt.loadRes(coco_preds)
+    coco_eval = COCOeval(coco_gt, coco_dt, "bbox")
+
+    coco_eval.evaluate()
+    coco_eval.accumulate()
+    coco_eval.summarize()
+
+    # 🎯 metric chính
+    map50 = coco_eval.stats[1]
+    map   = coco_eval.stats[0]
+
+    return map50, map
 
 
 if __name__ == "__main__":
