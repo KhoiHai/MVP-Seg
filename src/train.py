@@ -70,6 +70,7 @@ def train(config):
             model.load_state_dict(checkpoint["model_state"])
             optimizer.load_state_dict(checkpoint["optimizer_state"])
             scaler.load_state_dict(checkpoint["scaler_state"])
+            scheduler.load_state_dict(checkpoint["scheduler_state"])
             start_epoch = checkpoint["epoch"] + 1
             best_loss = checkpoint["best_loss"]
             print(f"✅ Resumed training from {config['resume_path']} at epoch {start_epoch}")
@@ -77,13 +78,31 @@ def train(config):
             model.load_state_dict(checkpoint)
             print(f"✅ Loaded pretrained model from {config['resume_path']}")
 
+    if start_epoch > config["warmup_epochs"]:
+        print("Resuming after warmup → Unfreezing backbone")
+
+        for param in model.backbone.parameters():
+            param.requires_grad = True
+
+        optimizer = Adam([
+            {"params": model.backbone.parameters(), "lr": config["lr"] * 0.1},
+            {"params": model.neck.parameters()},
+            {"params": model.proto.parameters()},
+            {"params": model.pred_head.parameters()},
+        ], lr=config["lr"], weight_decay=config["weight_decay"])
+
+        scheduler = CosineAnnealingLR(
+            optimizer,
+            T_max=config["epochs"] - start_epoch
+        )
+
     # -------------------------
     # TRAIN LOOP
     # -------------------------
-    for epoch in range(config["epochs"]):
+    for epoch in range(start_epoch, config["epochs"]):
 
         # UNFREEZE
-        if epoch == config["warmup_epochs"]:
+        if epoch == config["warmup_epochs"] and start_epoch <= config["warmup_epochs"]:
             print(f"\nEpoch {epoch+1}: Unfreezing backbone")
 
             for param in model.backbone.parameters():
@@ -191,6 +210,7 @@ def train(config):
             "epoch": epoch,
             "model_state": model.state_dict(),
             "optimizer_state": optimizer.state_dict(),
+            "scheduler_state": scheduler.state_dict(),
             "scaler_state": scaler.state_dict(),
             "best_loss": best_loss
         }, checkpoint_path)
@@ -201,6 +221,7 @@ def train(config):
                 "epoch": epoch,
                 "model_state": model.state_dict(),
                 "optimizer_state": optimizer.state_dict(),
+                "scheduler_state": scheduler.state_dict(),
                 "scaler_state": scaler.state_dict(),
                 "best_loss": best_loss
             }, os.path.join(config["save_dir"], "best.pth"))
