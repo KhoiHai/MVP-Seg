@@ -1,10 +1,11 @@
 import os
+import random
 import torch
 import numpy as np
 import tarfile
 import urllib.request
 import shutil
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, Sampler
 from torchvision.datasets import SBDataset
 from scipy import ndimage
 from tqdm import tqdm
@@ -101,6 +102,18 @@ class ChunkedDiskDataset(Dataset):
                                     weights_only=False)
         self._cache_id = None
         self._cache    = None
+        self.chunk_to_indices = self._build_chunk_to_indices()
+
+    def _build_chunk_to_indices(self):
+        chunk_map = {}
+        for global_idx, (chunk_file, local_idx) in enumerate(self.index):
+            chunk_map.setdefault(chunk_file, []).append((local_idx, global_idx))
+
+        ordered = {}
+        for chunk_file, pairs in chunk_map.items():
+            pairs.sort(key=lambda x: x[0])
+            ordered[chunk_file] = [global_idx for _, global_idx in pairs]
+        return ordered
 
     def __len__(self):
         return len(self.index)
@@ -158,6 +171,56 @@ class ChunkedDiskDataset(Dataset):
         return cls(chunk_dir)
 
 
+class ChunkAwareBatchSampler(Sampler):
+    """
+    Sample mini-batches with chunk locality:
+    - shuffle chunk order globally
+    - optionally shuffle sample order within each chunk
+    - form batches inside each chunk to minimize chunk reloads
+    """
+
+    def __init__(
+        self,
+        dataset: ChunkedDiskDataset,
+        batch_size: int,
+        shuffle_chunks: bool = True,
+        shuffle_within_chunk: bool = True,
+        drop_last: bool = False,
+    ):
+        if batch_size <= 0:
+            raise ValueError("batch_size must be > 0")
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.shuffle_chunks = shuffle_chunks
+        self.shuffle_within_chunk = shuffle_within_chunk
+        self.drop_last = drop_last
+
+    def __iter__(self):
+        chunk_files = list(self.dataset.chunk_to_indices.keys())
+        if self.shuffle_chunks:
+            random.shuffle(chunk_files)
+
+        for chunk_file in chunk_files:
+            sample_indices = self.dataset.chunk_to_indices[chunk_file].copy()
+            if self.shuffle_within_chunk:
+                random.shuffle(sample_indices)
+
+            for i in range(0, len(sample_indices), self.batch_size):
+                batch = sample_indices[i:i + self.batch_size]
+                if self.drop_last and len(batch) < self.batch_size:
+                    continue
+                yield batch
+
+    def __len__(self):
+        total = 0
+        for sample_indices in self.dataset.chunk_to_indices.values():
+            if self.drop_last:
+                total += len(sample_indices) // self.batch_size
+            else:
+                total += (len(sample_indices) + self.batch_size - 1) // self.batch_size
+        return total
+
+
 # ─────────────────────────────────────────────
 # 3. collate_fn
 # ─────────────────────────────────────────────
@@ -183,6 +246,10 @@ def get_sbd_dataloaders(
     img_size    : int  = 550,
     verbose     : bool = True,
     save_pt_dir : str  = "processed_data",
+    chunk_aware_sampling: bool = True,
+    shuffle_within_chunk: bool = True,
+    prefetch_factor: int = 2,
+    persistent_workers: bool = True,
 ):
     train_chunk_dir = os.path.join(save_pt_dir, f"train_{img_size}")
     val_chunk_dir   = os.path.join(save_pt_dir, f"val_{img_size}")
@@ -282,21 +349,50 @@ def get_sbd_dataloaders(
                 os.rename(tgz_bak, tgz_path)
 
     # ── dataloaders ────────────────────────────────────────────────────────
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size  = batch_size,
-        shuffle     = True,
-        num_workers = num_workers,
-        collate_fn  = collate_fn,
-        pin_memory  = True,
-    )
+    train_loader_kwargs = {
+        "num_workers": num_workers,
+        "collate_fn": collate_fn,
+        "pin_memory": True,
+    }
+    if num_workers > 0:
+        train_loader_kwargs["persistent_workers"] = persistent_workers
+        train_loader_kwargs["prefetch_factor"] = prefetch_factor
+
+    if chunk_aware_sampling and isinstance(train_dataset, ChunkedDiskDataset):
+        train_batch_sampler = ChunkAwareBatchSampler(
+            dataset=train_dataset,
+            batch_size=batch_size,
+            shuffle_chunks=True,
+            shuffle_within_chunk=shuffle_within_chunk,
+            drop_last=False,
+        )
+        train_loader = DataLoader(
+            train_dataset,
+            batch_sampler=train_batch_sampler,
+            **train_loader_kwargs,
+        )
+    else:
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            **train_loader_kwargs,
+        )
+
+    val_loader_kwargs = {
+        "batch_size": 1,
+        "shuffle": False,
+        "num_workers": num_workers,
+        "collate_fn": collate_fn,
+        "pin_memory": True,
+    }
+    if num_workers > 0:
+        val_loader_kwargs["persistent_workers"] = persistent_workers
+        val_loader_kwargs["prefetch_factor"] = prefetch_factor
+
     val_loader = DataLoader(
         val_dataset,
-        batch_size  = 1,
-        shuffle     = False,
-        num_workers = num_workers,
-        collate_fn  = collate_fn,
-        pin_memory  = True,
+        **val_loader_kwargs,
     )
 
     if verbose:

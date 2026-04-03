@@ -17,7 +17,7 @@ def move_targets_to_device(targets, device):
     for t in targets:
         new_t = {}
         for k, v in t.items():
-            new_t[k] = v.to(device) if isinstance(v, torch.Tensor) else v
+            new_t[k] = v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v
         new_targets.append(new_t)
     return new_targets
 
@@ -34,6 +34,10 @@ def train(config):
         batch_size  = config["batch_size"],
         num_workers = config["num_workers"],
         save_pt_dir = config["processed_dir"],
+        chunk_aware_sampling = config.get("chunk_aware_sampling", True),
+        shuffle_within_chunk = config.get("shuffle_within_chunk", True),
+        prefetch_factor = config.get("prefetch_factor", 2),
+        persistent_workers = config.get("persistent_workers", True),
     )
 
     print(f"Train batches: {len(train_loader)} | Val batches: {len(val_loader)}")
@@ -134,7 +138,7 @@ def train(config):
                 continue
 
             images, targets = batch
-            images  = images.to(device)
+            images  = images.to(device, non_blocking=True)
             targets = move_targets_to_device(targets, device)
 
             optimizer.zero_grad()
@@ -179,7 +183,7 @@ def train(config):
                 if batch is None:
                     continue
                 images, targets = batch
-                images  = images.to(device)
+                images  = images.to(device, non_blocking=True)
                 targets = move_targets_to_device(targets, device)
 
                 outputs   = model(images)
@@ -229,12 +233,18 @@ if __name__ == "__main__":
 
         # ── Training ──────────────────────────────────────────────────────
         "batch_size":    2,
-        "num_workers":   2,
+        "num_workers":   4,
         "lr":            1e-4,
         "weight_decay":  1e-4,
         "epochs":        50,
         "warmup_epochs": 3,
         "resume":        False,
+
+        # ── Data loading (I/O optimization) ──────────────────────────────
+        "chunk_aware_sampling": True,
+        "shuffle_within_chunk": True,
+        "prefetch_factor": 2,
+        "persistent_workers": True,
     }
 
     train(config)
