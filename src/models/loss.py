@@ -197,26 +197,15 @@ class Model_Loss(nn.Module):
                 continue
             
             # ─────────────────────────────────────
-            # 4.1: Match locations to GT boxes
+            # 4.1: MATCH LOCATIONS
             # ─────────────────────────────────────
             matched_idx, pos_mask = match_locations(locations, gt_boxes)
+
             n_pos = pos_mask.sum().item()
-            
-            # Limit positive samples (optional, prevent too many)
-            max_pos = 300
-            if n_pos > max_pos:
-                pos_idx = torch.where(pos_mask)[0]
-                perm = torch.randperm(n_pos, device=pos_idx.device)[:max_pos]
-                selected = pos_idx[perm]
-                new_pos_mask = torch.zeros_like(pos_mask)
-                new_pos_mask[selected] = True
-                pos_mask = new_pos_mask
-                n_pos = max_pos
-            
             total_num_pos += n_pos
             
             # ─────────────────────────────────────
-            # 4.2: CLASSIFICATION LOSS
+            # 4.2: CLASSIFICATION LOSS (WITH NEGATIVE MINING)
             # ─────────────────────────────────────
             gt_cls_target = torch.full(
                 (N,),
@@ -224,11 +213,41 @@ class Model_Loss(nn.Module):
                 dtype=torch.long,
                 device=cls_preds.device
             )
+
             if n_pos > 0:
-                # Assign matched labels to positive locations
                 gt_cls_target[pos_mask] = gt_labels[matched_idx[pos_mask]]
-            
-            all_cls_loss += sigmoid_focal_loss(cls_preds[i], gt_cls_target)
+
+            # 🔥 split pos / neg
+            neg_mask = ~pos_mask
+
+            num_pos = pos_mask.sum()
+            num_neg = neg_mask.sum()
+
+            # 🔥 limit negative: pos:neg = 1:3
+            if num_pos == 0:
+                max_neg = 100  
+            else:
+                max_neg = num_pos * 3
+
+            if num_neg > max_neg:
+                neg_idx = torch.where(neg_mask)[0]
+
+                # Randomly choose
+                perm = torch.randperm(num_neg, device=neg_idx.device)[:max_neg]
+                selected_neg = neg_idx[perm]
+
+                new_neg_mask = torch.zeros_like(neg_mask)
+                new_neg_mask[selected_neg] = True
+                neg_mask = new_neg_mask
+
+            # 🔥 combine pos + selected neg
+            final_mask = pos_mask | neg_mask
+
+            # filter predictions & targets
+            cls_pred_sampled = cls_preds[i][final_mask]
+            gt_cls_sampled = gt_cls_target[final_mask]
+
+            all_cls_loss += sigmoid_focal_loss(cls_pred_sampled, gt_cls_sampled)
             
             # Skip rest if no positives
             if n_pos == 0:
