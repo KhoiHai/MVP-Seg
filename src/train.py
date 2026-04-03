@@ -236,14 +236,15 @@ def train(config):
         os.makedirs(config["save_dir"], exist_ok=True)
 
         checkpoint = {
-            "epoch": epoch,
-            "model_state": model.state_dict(),
-            "optimizer_state": optimizer.state_dict(),
-            "scaler_state": scaler.state_dict(),
-            "best_loss": best_loss
-        }
+                "epoch": epoch,
+                "model_state": model.state_dict(),
+                "optimizer_state": optimizer.state_dict(),
+                "scaler_state": scaler.state_dict(),
+                "best_loss": best_loss
+            }
 
-        torch.save(checkpoint, os.path.join(config["save_dir"], f"epoch_{epoch+1}.pth"))
+        if (epoch + 1) % 10 == 0:
+            torch.save(checkpoint, os.path.join(config["save_dir"], f"epoch_{epoch+1}.pth"))
 
         if val_loss < best_loss:
             best_loss = val_loss
