@@ -19,7 +19,7 @@ def move_targets_to_device(targets, device):
 # -------------------------
 # OPTIMIZER BUILDER
 # -------------------------
-def build_optimizer(model, base_lr, weight_decay, backbone_lr_ratio=0.1):
+def build_optimizer(model, base_lr, weight_decay, backbone_lr_ratio=0.5):
     return AdamW([
         {"params": model.backbone.parameters(), "lr": base_lr * backbone_lr_ratio},
         {"params": model.neck.parameters(), "lr": base_lr},

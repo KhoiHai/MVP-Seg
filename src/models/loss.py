@@ -120,8 +120,8 @@ class Model_Loss(nn.Module):
         self,
         num_classes=20,
         alpha_cls=1.0,
-        alpha_box=1.0,
-        alpha_mask=2.0,
+        alpha_box=1.5,
+        alpha_mask=6.125,
         strides=[8, 16, 32],
         img_size=550,
     ):
@@ -203,7 +203,7 @@ class Model_Loss(nn.Module):
             n_pos = pos_mask.sum().item()
             
             # Limit positive samples (optional, prevent too many)
-            max_pos = 100
+            max_pos = 300
             if n_pos > max_pos:
                 pos_idx = torch.where(pos_mask)[0]
                 perm = torch.randperm(n_pos, device=pos_idx.device)[:max_pos]
