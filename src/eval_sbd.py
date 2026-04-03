@@ -707,28 +707,28 @@ def visualize_predictions(
 # ENTRY POINT
 # ════════════════════════════════════════════════════════════════
 
-if __name__ == "__main__":
+def eval(CONFIG):
 
-    CONFIG = {
-        # Checkpoint từ train.py (lưu dạng {"model_state": ..., "epoch": ...})
-        "model_path":    "checkpoints/best.pth",
+    # CONFIG = {
+    #     # Checkpoint từ train.py (lưu dạng {"model_state": ..., "epoch": ...})
+    #     "model_path":    "checkpoints/best.pth",
 
-        # Phải khớp với data_root trong config train
-        "data_root":     "/content/SBD",
+    #     # Phải khớp với data_root trong config train
+    #     "data_root":     "/content/SBD",
 
-        # Số class SBD = 20
-        "num_classes":   20,
+    #     # Số class SBD = 20
+    #     "num_classes":   20,
 
-        # Ngưỡng score sơ bộ khi decode
-        # Đặt thấp (0.05) để giữ đủ recall khi tính AP
-        "score_thresh":  0.05,
+    #     # Ngưỡng score sơ bộ khi decode
+    #     # Đặt thấp (0.05) để giữ đủ recall khi tính AP
+    #     "score_thresh":  0.05,
 
-        # Visualization
-        "visualize":     True,
-        "num_vis":       4,
-        "vis_score_thr": 0.3,       # Ngưỡng cao hơn khi hiển thị
-        "save_vis_dir":  "eval_vis", # None → plt.show() trực tiếp
-    }
+    #     # Visualization
+    #     "visualize":     True,
+    #     "num_vis":       4,
+    #     "vis_score_thr": 0.3,       # Ngưỡng cao hơn khi hiển thị
+    #     "save_vis_dir":  "eval_vis", # None → plt.show() trực tiếp
+    # }
 
     # ── Chạy evaluation ──────────────────────────────────────────
     results = evaluate_sbd(
