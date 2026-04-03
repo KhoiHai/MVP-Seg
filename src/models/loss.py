@@ -119,7 +119,7 @@ class Model_Loss(nn.Module):
     def __init__(
         self,
         num_classes=20,
-        alpha_cls=1.0,
+        alpha_cls=2.0,
         alpha_box=1.5,
         alpha_mask=6.125,
         strides=[8, 16, 32],

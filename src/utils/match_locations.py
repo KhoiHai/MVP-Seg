@@ -1,6 +1,6 @@
 import torch
 
-def match_locations(locations, gt_boxes, radius=2.5):
+def match_locations(locations, gt_boxes, center_radius=1.5, strides=None):
     if gt_boxes.shape[0] == 0:
         return (
             torch.full((locations.shape[0],), -1, dtype=torch.long, device=locations.device),
@@ -14,36 +14,30 @@ def match_locations(locations, gt_boxes, radius=2.5):
     r = gt_boxes[None, :, 2] - xs[:, None]
     b = gt_boxes[None, :, 3] - ys[:, None]
 
-    reg_targets = torch.stack([l, t, r, b], dim=2)
+    reg_targets = torch.stack([l, t, r, b], dim=2)  # [N, M, 4]
+    inside_box  = reg_targets.min(dim=2).values > 0  # trong box
 
-    # 🔥 condition 1: inside box
-    inside_box = reg_targets.min(dim=2).values > 0
+    # Center sampling: location phải gần tâm GT box
+    cx = (gt_boxes[:, 0] + gt_boxes[:, 2]) / 2  # [M]
+    cy = (gt_boxes[:, 1] + gt_boxes[:, 3]) / 2  # [M]
 
-    # 🔥 condition 2: center sampling (QUAN TRỌNG)
-    cx = (gt_boxes[:, 0] + gt_boxes[:, 2]) / 2
-    cy = (gt_boxes[:, 1] + gt_boxes[:, 3]) / 2
+    # Dùng stride nhỏ nhất (8) để định nghĩa vùng center
+    radius = center_radius * 8  # 12 pixel
+    inside_center = (
+        (xs[:, None] - cx[None, :]).abs() <= radius
+    ) & (
+        (ys[:, None] - cy[None, :]).abs() <= radius
+    )
 
-    # radius theo pixel (scale theo stride)
-    radius = radius * 8  # bạn có stride nhỏ nhất = 8
+    # Location hợp lệ: trong box VÀ gần center
+    inside = inside_box & inside_center
 
-    center_l = xs[:, None] - (cx[None, :] - radius)
-    center_t = ys[:, None] - (cy[None, :] - radius)
-    center_r = (cx[None, :] + radius) - xs[:, None]
-    center_b = (cy[None, :] + radius) - ys[:, None]
-
-    center_box = torch.stack([center_l, center_t, center_r, center_b], dim=2)
-    inside_center = center_box.min(dim=2).values > 0
-
-    # 🔥 final mask
-    final_mask = inside_box & inside_center
-
-    # assign GT nhỏ nhất
     areas = (gt_boxes[:, 2] - gt_boxes[:, 0]) * (gt_boxes[:, 3] - gt_boxes[:, 1])
     areas = areas[None].repeat(locations.shape[0], 1)
-    areas[~final_mask] = float('inf')
+    areas[~inside] = float('inf')
 
     matched_idx = areas.argmin(dim=1)
-    pos_mask = final_mask.any(dim=1)
+    pos_mask    = inside.any(dim=1)
     matched_idx[~pos_mask] = -1
 
     return matched_idx, pos_mask
