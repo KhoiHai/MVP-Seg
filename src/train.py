@@ -79,7 +79,7 @@ def train(config):
 
     base_lrs = [g["lr"] for g in optimizer.param_groups]
 
-    criterion = Model_Loss(num_classes=config["num_classes"])
+    criterion = Model_Loss(num_classes=config["num_classes"], alpha_box=5.0,)
     scaler = torch.cuda.amp.GradScaler(enabled=(device == "cuda"))
 
     total_iters = config["epochs"] * len(train_loader)
@@ -162,9 +162,9 @@ def train(config):
 
             with torch.cuda.amp.autocast(enabled=(device == "cuda")):
                 outputs = model(images)
-                loss_dict = criterion(outputs, targets)
-                loss = loss_dict["loss"]
 
+            loss_dict = criterion(outputs, targets)
+            loss = loss_dict["loss"]
             scaler.scale(loss).backward()
 
             torch.nn.utils.clip_grad_norm_(
