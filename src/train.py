@@ -103,6 +103,9 @@ def train(config):
 
             if "optimizer_state" in checkpoint:
                 optimizer.load_state_dict(checkpoint["optimizer_state"])
+                # Override weight_decay mới
+                for g in optimizer.param_groups:
+                    g["weight_decay"] = config["weight_decay"]
 
             if "scaler_state" in checkpoint:
                 scaler.load_state_dict(checkpoint["scaler_state"])
