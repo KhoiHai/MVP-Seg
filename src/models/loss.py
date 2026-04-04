@@ -329,7 +329,7 @@ class Model_Loss(nn.Module):
         # ═════════════════════════════════════════
         # STEP 5: Normalize and combine losses
         # ═════════════════════════════════════════
-        divisor_cls = max(total_num_pos, 1)
+        divisor_cls = total_predictions
         divisor_box_mask = max(total_num_pos, 1)
         
         final_loss_cls = (all_cls_loss / divisor_cls) * self.alpha_cls
