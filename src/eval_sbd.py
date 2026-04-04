@@ -64,7 +64,7 @@ AREA_MEDIUM = 96 ** 2       # < 9216 px²
 
 # Theo proposal (Bảng 1): Top-k = 200, NMS thresh = 0.5
 TOP_K       = 200
-NMS_THRESH  = 0.3
+NMS_THRESH  = 0.2
 
 # Strides tương ứng với N2, N3, N4 (khớp với train.py / loss.py)
 STRIDES     = [8, 16, 32]
@@ -611,8 +611,29 @@ def visualize_predictions(
     """
     import matplotlib.pyplot as plt
     import matplotlib.patches as mpatches
-
-    COLORS = plt.cm.tab20(np.linspace(0, 1, 20))
+    import matplotlib.colors as mcolors
+    COLORS = [
+        (1.0, 0.0, 0.0, 1.0),   # red
+        (0.0, 0.8, 0.0, 1.0),   # green
+        (0.0, 0.0, 1.0, 1.0),   # blue
+        (1.0, 0.8, 0.0, 1.0),   # yellow
+        (1.0, 0.0, 1.0, 1.0),   # magenta
+        (0.0, 1.0, 1.0, 1.0),   # cyan
+        (1.0, 0.5, 0.0, 1.0),   # orange
+        (0.5, 0.0, 1.0, 1.0),   # purple
+        (0.0, 0.5, 0.0, 1.0),   # dark green
+        (0.5, 0.0, 0.0, 1.0),   # dark red
+        (0.0, 0.0, 0.5, 1.0),   # dark blue
+        (0.8, 0.8, 0.0, 1.0),   # olive
+        (0.0, 0.8, 0.8, 1.0),   # teal
+        (0.8, 0.0, 0.8, 1.0),   # violet
+        (0.9, 0.6, 0.6, 1.0),   # pink
+        (0.6, 0.9, 0.6, 1.0),   # light green
+        (0.6, 0.6, 0.9, 1.0),   # light blue
+        (0.9, 0.9, 0.6, 1.0),   # light yellow
+        (0.6, 0.9, 0.9, 1.0),   # light cyan
+        (0.9, 0.6, 0.9, 1.0),   # light purple
+    ]
 
     model.eval()
     count = 0
