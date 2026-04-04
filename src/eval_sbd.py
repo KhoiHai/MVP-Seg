@@ -64,7 +64,7 @@ AREA_MEDIUM = 96 ** 2       # < 9216 px²
 
 # Theo proposal (Bảng 1): Top-k = 200, NMS thresh = 0.5
 TOP_K       = 200
-NMS_THRESH  = 0.5
+NMS_THRESH  = 0.3
 
 # Strides tương ứng với N2, N3, N4 (khớp với train.py / loss.py)
 STRIDES     = [8, 16, 32]
@@ -651,7 +651,7 @@ def visualize_predictions(
                 for j in range(len(det["boxes"])):
                     cls_id = det["labels"][j].item()
                     score  = det["scores"][j].item()
-                    color  = COLORS[cls_id % 20]
+                    color = COLORS[j % 20]
 
                     # BBox
                     x1,y1,x2,y2 = det["boxes"][j].cpu().numpy()
