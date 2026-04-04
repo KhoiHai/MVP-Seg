@@ -119,8 +119,8 @@ class Model_Loss(nn.Module):
     def __init__(
         self,
         num_classes=20,
-        alpha_cls=1.0,
-        alpha_box=1.5,
+        alpha_cls=2.0,
+        alpha_box=5.0,
         alpha_mask=4,
         strides=[8, 16, 32],
         img_size=550,
@@ -329,7 +329,7 @@ class Model_Loss(nn.Module):
         # ═════════════════════════════════════════
         # STEP 5: Normalize and combine losses
         # ═════════════════════════════════════════
-        divisor_cls = total_predictions
+        divisor_cls = max(total_num_pos, 1)
         divisor_box_mask = max(total_num_pos, 1)
         
         final_loss_cls = (all_cls_loss / divisor_cls) * self.alpha_cls

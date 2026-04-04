@@ -43,7 +43,7 @@ class Prediction_Head(nn.Module):
             x = self.shared_conv(f)
 
             cls = self.cls_head(x)
-            box = F.relu(self.box_head(x))
+            box = F.softplus(self.box_head(x))
             coef = self.coef_head(x)
 
             cls_outputs.append(cls)
