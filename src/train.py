@@ -66,6 +66,7 @@ def train(config):
     for param in model.backbone.parameters():
         param.requires_grad = False
 
+    model.backbone.eval()
     print(f"Backbone frozen for {config['warmup_epochs']} epochs")
 
     # -------------------------
@@ -147,6 +148,8 @@ def train(config):
             base_lrs = [g["lr"] for g in optimizer.param_groups]
 
         model.train()
+        if epoch < config["warmup_epochs"]:
+            model.backbone.eval()
         total_loss = 0.0
 
         for batch_idx, batch in enumerate(train_loader):
