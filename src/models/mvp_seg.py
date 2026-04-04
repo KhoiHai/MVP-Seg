@@ -56,8 +56,10 @@ class MVP_Seg(nn.Module):
         # Prediction (All N2, N3, N4 process)
         cls_out, box_out, coef_out = self.pred_head(neck_feature_map)
 
+        coef_out = [torch.tanh(c) for c in coef_out]
+
         # Prototype (Only N2 process)
-        proto_out = self.proto(neck_feature_map[0])
+        proto_out = torch.sigmoid(self.proto(neck_feature_map[0]))
 
         return{
             "cls": cls_out,

@@ -121,7 +121,7 @@ class Model_Loss(nn.Module):
         num_classes=20,
         alpha_cls=1.0,
         alpha_box=1.5,
-        alpha_mask=6.125,
+        alpha_mask=4,
         strides=[8, 16, 32],
         img_size=550,
     ):
