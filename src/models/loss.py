@@ -156,6 +156,7 @@ class Model_Loss(nn.Module):
         box_preds  = flatten_predictions(outputs["box"])    # [B, N, 4]
         coef_preds = flatten_predictions(outputs["coef"])   # [B, N, P]
         proto      = outputs["proto"]                       # [B, P, Hp, Wp]
+        level_sizes = [x.shape[2] * x.shape[3] for x in outputs["cls"]]
 
         B, N, C = cls_preds.shape
 
@@ -186,7 +187,12 @@ class Model_Loss(nn.Module):
             # 4.1: Match locations → positive/negative
             # ─────────────────────────────────────────
             if gt_boxes.shape[0] > 0:
-                matched_idx, pos_mask = match_locations(locations, gt_boxes)
+                matched_idx, pos_mask = match_locations(
+                    locations,
+                    gt_boxes,
+                    strides=self.strides,
+                    level_sizes=level_sizes,
+                )
                 n_pos = pos_mask.sum().item()
                 total_num_pos += n_pos
             else:
