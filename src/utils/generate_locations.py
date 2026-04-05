@@ -12,15 +12,15 @@ def generate_locations(feature_list, strides):
     locations = []
 
     for f, stride in zip(feature_list, strides):
-        B, C, H, W = f.shape
+        _, _, H, W = f.shape
+        stride = float(stride)
 
-        shifts_x = torch.arange(0, W * stride, step=stride, device=f.device, dtype=torch.float32) + stride * 0.5
-        shifts_y = torch.arange(0, H * stride, step=stride, device=f.device, dtype=torch.float32) + stride * 0.5
+        shifts_x = (torch.arange(W, device=f.device, dtype=torch.float32) + 0.5) * stride
+        shifts_y = (torch.arange(H, device=f.device, dtype=torch.float32) + 0.5) * stride
 
         shift_y, shift_x = torch.meshgrid(shifts_y, shifts_x, indexing="ij")
-        loc = torch.stack((shift_x, shift_y), dim=-1)  # [H, W, 2]
-        loc = loc.reshape(-1, 2)
+        loc = torch.stack((shift_x, shift_y), dim=-1).reshape(-1, 2)
 
         locations.append(loc)
 
-    return torch.cat(locations, dim=0)  # [N, 2]
+    return torch.cat(locations, dim=0)
