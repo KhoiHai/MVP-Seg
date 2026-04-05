@@ -5,10 +5,10 @@ import tarfile
 import urllib.request
 import shutil
 from torch.utils.data import Dataset, DataLoader
-from torchvision.datasets import SBDataset
-from scipy import ndimage
+from scipy.io import loadmat
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+from PIL import Image
  
  
 # ─────────────────────────────────────────────
@@ -16,12 +16,11 @@ from albumentations.pytorch import ToTensorV2
 # ─────────────────────────────────────────────
 class SBInstanceDataset(Dataset):
     def __init__(self, data_root: str, image_set: str = "train", img_size: int = 550):
-        self.dataset = SBDataset(
-            root=data_root,
-            image_set=image_set,
-            mode="segmentation",
-            download=False
-        )
+        split_file = os.path.join(data_root, f"{image_set}.txt")
+        with open(split_file, "r") as f:
+            self.image_ids = [line.strip() for line in f if line.strip()]
+        self.img_dir = os.path.join(data_root, "img")
+        self.inst_dir = os.path.join(data_root, "inst")
         self.img_size = img_size
         self.transform = A.Compose([
             A.Resize(img_size, img_size),
@@ -30,28 +29,35 @@ class SBInstanceDataset(Dataset):
         ])
  
     def __len__(self):
-        return len(self.dataset)
+        return len(self.image_ids)
  
     def __getitem__(self, idx: int):
-        image, mask = self.dataset[idx]
-        image = np.array(image)   # H × W × 3  uint8
-        mask  = np.array(mask)    # H × W      uint8
- 
-        # ── collect per-instance masks & labels ──────────────────────────
-        class_ids = np.unique(mask)
-        class_ids = class_ids[(class_ids != 0) & (class_ids != 255)]
- 
+        img_id = self.image_ids[idx]
+        img_path = os.path.join(self.img_dir, f"{img_id}.jpg")
+        inst_path = os.path.join(self.inst_dir, f"{img_id}.mat")
+
+        image = np.array(Image.open(img_path).convert("RGB"))  # H × W × 3  uint8
+        inst_mat = loadmat(inst_path, squeeze_me=True, struct_as_record=False)
+        gt_inst = inst_mat["GTinst"]
+        inst_seg = np.array(gt_inst.Segmentation).astype(np.int32)  # H × W
+        categories = np.atleast_1d(np.array(gt_inst.Categories)).astype(np.int32)
+
         masks_list, labels_list = [], []
-        for cls_id in class_ids:
-            binary = (mask == cls_id).astype(np.uint8)
-            labeled_array, num_instances = ndimage.label(binary)
- 
-            for inst_idx in range(1, num_instances + 1):
-                inst_mask = (labeled_array == inst_idx).astype(np.uint8)
-                if inst_mask.sum() < 20:
-                    continue
-                masks_list.append(inst_mask)
-                labels_list.append(int(cls_id) - 1)  # 1-20 → 0-19
+        inst_ids = np.unique(inst_seg)
+        inst_ids = inst_ids[inst_ids > 0]
+        for inst_id in inst_ids:
+            cat_idx = int(inst_id) - 1
+            if cat_idx < 0 or cat_idx >= len(categories):
+                continue
+            cls_id = int(categories[cat_idx])
+            if cls_id <= 0:
+                continue
+
+            inst_mask = (inst_seg == inst_id).astype(np.uint8)
+            if inst_mask.sum() < 20:
+                continue
+            masks_list.append(inst_mask)
+            labels_list.append(cls_id - 1)  # 1-20 → 0-19
  
         # ── transform (resize + normalize) ───────────────────────────────
         if len(masks_list) > 0:
@@ -86,7 +92,7 @@ class SBInstanceDataset(Dataset):
                 "boxes":  torch.zeros((0, 4), dtype=torch.float32),
                 "labels": torch.zeros((0,),   dtype=torch.int64),
                 "masks":  torch.zeros((0, h, w), dtype=torch.float32),
-                "img_id": idx,
+                "img_id": img_id,
             }
  
         return {
@@ -94,7 +100,7 @@ class SBInstanceDataset(Dataset):
             "boxes":  torch.tensor(valid_boxes, dtype=torch.float32),
             "labels": torch.tensor(valid_labels, dtype=torch.int64),
             "masks":  torch.stack(valid_masks),
-            "img_id": idx,
+            "img_id": img_id,
         }
  
  
