@@ -38,8 +38,9 @@ class COCODataset(Dataset):
             self.img_ids = self.img_ids[:subset_size]
 
         # Remap COCO category IDs (sparse 1-90) to dense 0-based class indices
-        cat_ids = self.coco.getCatIds()
+        cat_ids = sorted(self.coco.getCatIds())
         self.cat_id_to_label = {cat_id: idx for idx, cat_id in enumerate(cat_ids)}
+        self.label_to_cat_id = {idx: cat_id for cat_id, idx in self.cat_id_to_label.items()}
 
     def __len__(self):
         return len(self.img_ids)
@@ -51,6 +52,7 @@ class COCODataset(Dataset):
         img_info = self.coco.loadImgs(img_id)[0]
         img_path = os.path.join(self.img_dir, img_info["file_name"])
         image = np.array(Image.open(img_path).convert("RGB"))
+        orig_h, orig_w = image.shape[:2]
 
         # Load all non-crowd annotations for this image
         ann_ids = self.coco.getAnnIds(imgIds = img_id, iscrowd = False)
@@ -79,39 +81,43 @@ class COCODataset(Dataset):
 
         boxes  = np.array(boxes,  dtype = np.float32)                    # [N, 4]
         labels = np.array(labels, dtype = np.int64)                      # [N]
-        # --- mask fix ---
-        mask = (self.coco.annToMask(ann) > 0).astype(np.float32)
+        masks  = np.stack(masks, axis=0).astype(np.float32)              # [N, H, W]
 
         # --- transform ---
         if self.transforms:
-            mask_list = [masks[i] for i in range(masks.shape[0])]
-
             transformed = self.transforms(
                 image=image,
                 bboxes=boxes.tolist(),
                 bbox_labels=labels.tolist(),
-                masks=mask_list
+                masks=[m for m in masks]
             )
 
             if len(transformed["bboxes"]) == 0:
                 return None
 
             image = transformed["image"]
-
             boxes = torch.tensor(transformed["bboxes"], dtype=torch.float32)
             labels = torch.tensor(transformed["bbox_labels"], dtype=torch.int64)
-
-            masks = torch.from_numpy(np.stack(transformed["masks"])).float()
+            if len(transformed["masks"]) == 0:
+                return None
+            masks = torch.from_numpy(np.stack(transformed["masks"]).astype(np.float32)).float()
         else:
             # Fallback: convert to tensor manually without augmentation
             image = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
+            boxes = torch.from_numpy(boxes).float()
+            labels = torch.from_numpy(labels).long()
+            masks = torch.from_numpy(masks).float()
+
+        resized_h, resized_w = int(image.shape[1]), int(image.shape[2])
 
         return{
             "image":  image,    # [3, img_size, img_size]
             "boxes":  boxes,    # [N, 4]  pascal_voc format
             "labels": labels,   # [N]     0-based class indices
             "masks":  masks,    # [N, img_size, img_size]  binary
-            "img_id": img_id    # original COCO image ID for evaluation
+            "img_id": int(img_id),    # original COCO image ID for evaluation
+            "orig_size": (orig_h, orig_w),
+            "resized_size": (resized_h, resized_w),
         }
 
 
@@ -180,7 +186,7 @@ def collate_fn(batch):
 
 
 def get_coco_dataloaders(data_root, batch_size = 5, num_workers = 2,
-                    subset_size = 10000, img_size = 550):
+                    subset_size = 10000, img_size = 550, val_subset_size = None):
     '''
     Build train and val DataLoaders for COCO subset training
         Expected data_root structure:
@@ -209,7 +215,7 @@ def get_coco_dataloaders(data_root, batch_size = 5, num_workers = 2,
         img_dir      = os.path.join(data_root, "val2017"),
         ann_file     = os.path.join(data_root, "annotations/instances_val2017.json"),
         transforms   = get_transforms(train = False, img_size = img_size),
-        subset_size  = 2000       # Smaller val subset for faster evaluation
+        subset_size  = val_subset_size
     )
 
     train_loader = DataLoader(
