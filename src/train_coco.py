@@ -105,6 +105,7 @@ def train(config):
             scaler.load_state_dict(ckpt["scaler_state"])
 
         start_epoch = ckpt.get("epoch", 0) + 1
+        # backward compatible with older checkpoints using "best_loss"
         best_val_loss = ckpt.get("best_val_loss", ckpt.get("best_loss", float("inf")))
         print(f"Resume epoch: {start_epoch}")
 

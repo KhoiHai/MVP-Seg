@@ -199,7 +199,7 @@ def _resize_masks_to_orig(masks_550, orig_size):
 
 
 def _encode_binary_mask(mask_np):
-    rle = mask_utils.encode(np.asfortranarray(mask_np.astype(np.uint8)))
+    rle = mask_utils.encode(np.asfortranarray(mask_np))
     rle["counts"] = rle["counts"].decode("utf-8")
     return rle
 
@@ -372,9 +372,9 @@ if __name__ == "__main__":
         data_root="data/coco",
         num_classes=80,
         num_prototypes=32,
-        img_size=550,
-        top_k=200,
-        nms_thresh=0.5,
+        img_size=IMG_SIZE,
+        top_k=TOP_K,
+        nms_thresh=NMS_THRESH,
         score_thresh=0.05,
         max_images=None,
         visualize=False,
