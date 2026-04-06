@@ -369,7 +369,7 @@ def evaluate_coco(
 if __name__ == "__main__":
     evaluate_coco(
         model_path="checkpoints_coco/best.pth",
-        data_root="data/coco",
+        data_root="/content/coco",
         num_classes=80,
         num_prototypes=32,
         img_size=IMG_SIZE,
