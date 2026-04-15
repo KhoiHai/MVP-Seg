@@ -100,6 +100,19 @@ def mask_bce_loss(mask_logits, target_masks, box_mask):
 
     return loss_per_sample.sum()
 
+# ═════════════════════════════════════════════════════════════
+# HELPER: tính stride của từng location
+# ═════════════════════════════════════════════════════════════
+def _build_stride_tensor(level_sizes, strides, device):
+    """
+    Trả về tensor [N] chứa stride tương ứng với mỗi location.
+    Dùng để normalize target ltrb: target_norm = target_pixel / stride
+    → cả pred (softplus output ~0-10) và target_norm đều cùng scale.
+    """
+    parts = []
+    for size, stride in zip(level_sizes, strides):
+        parts.append(torch.full((int(size),), float(stride), device=device))
+    return torch.cat(parts)  # [N]
 
 # ═════════════════════════════════════════════════════════════
 # MAIN LOSS CLASS
@@ -165,7 +178,10 @@ class Model_Loss(nn.Module):
         # ═══════════════════════════════════════════════
         locations = generate_locations(outputs["cls"], self.strides)
         locations = locations.to(cls_preds.device)
-
+        
+        # [N] — stride tương ứng với từng location, dùng để normalize target
+        stride_per_loc = _build_stride_tensor(level_sizes, self.strides, cls_preds.device)
+        
         # ═══════════════════════════════════════════════
         # STEP 3: Khởi tạo accumulators
         # ═══════════════════════════════════════════════
@@ -173,7 +189,7 @@ class Model_Loss(nn.Module):
         all_box_loss          = 0.0
         all_mask_loss         = 0.0
         total_num_pos         = 0
-        total_num_cls_samples = 0  # tổng số location thực tế dùng tính cls loss
+        total_num_loc         = 0  # tổng locations dùng cho normalize cls
 
         # ═══════════════════════════════════════════════
         # STEP 4: Xử lý từng ảnh trong batch
@@ -232,6 +248,7 @@ class Model_Loss(nn.Module):
             # total_num_cls_samples += final_mask.sum().item()
             # Áp dụng focal loss trên toàn bộ locations, nhưng chỉ có positive mới có target class, negative sẽ có target -1 và được ignore trong loss
             all_cls_loss += sigmoid_focal_loss(cls_preds[i], gt_cls_target)
+            total_num_loc += N
 
             # Không có positive → bỏ qua box và mask loss
             if n_pos == 0:
@@ -241,7 +258,8 @@ class Model_Loss(nn.Module):
             # 4.3: Box regression loss
             # ─────────────────────────────────────────
             pos_box_preds    = box_preds[i][pos_mask]                  # [n_pos, 4]
-            pos_locs         = locations[pos_mask]                     # [n_pos, 2]
+            pos_locs         = locations[pos_mask]    
+            pos_strides      = stride_per_loc[pos_mask]         # [n_pos]                 # [n_pos, 2]
             matched_gt_boxes = gt_boxes[matched_idx[pos_mask]]         # [n_pos, 4]
 
             # Target offset ltrb (pixel space)
@@ -250,15 +268,13 @@ class Model_Loss(nn.Module):
             r = matched_gt_boxes[:, 2] - pos_locs[:, 0]
             b = matched_gt_boxes[:, 3] - pos_locs[:, 1]
 
-            target_ltrb = torch.stack([l, t, r, b], dim=1).clamp(min=0.1)
+            target_ltrb_px = torch.stack([l, t, r, b], dim=1).clamp(min=0.0)
 
             # Normalize về [0,1] để khớp với scale của box_preds
-            # target_ltrb_norm = target_ltrb / self.img_size
+            target_ltrb_norm = target_ltrb_px / pos_strides.unsqueeze(1)
             # SỬA: KHÔNG chia cho self.img_size nữa vì box_preds dùng softplus
             # SỬA: Giảm beta của smooth_l1_loss xuống 0.1 để phù hợp với pixel scale
-            all_box_loss += smooth_l1_loss(pos_box_preds, target_ltrb, beta=0.1)
-
-            # all_box_loss += smooth_l1_loss(pos_box_preds, target_ltrb_norm)
+            all_box_loss += smooth_l1_loss(pos_box_preds, target_ltrb_norm, beta=0.1)
 
             # ─────────────────────────────────────────
             # 4.4: Mask loss
@@ -313,11 +329,12 @@ class Model_Loss(nn.Module):
         # divisor_cls      = max(total_num_cls_samples, 1)
         # divisor_box_mask = max(total_num_pos, 1)
         # SỬA: Tất cả đều normalize dựa trên số lượng POSITIVE samples
-        divisor = max(total_num_pos, 1)
+        divisor_cls  = max(total_num_loc, 1)
+        divisor_pos  = max(total_num_pos, 1)
 
-        final_loss_cls  = (all_cls_loss  / divisor)      * self.alpha_cls
-        final_loss_box  = (all_box_loss  / divisor) * self.alpha_box
-        final_loss_mask = (all_mask_loss / divisor) * self.alpha_mask
+        final_loss_cls  = (all_cls_loss  / divisor_cls) * self.alpha_cls
+        final_loss_box  = (all_box_loss  / divisor_pos) * self.alpha_box
+        final_loss_mask = (all_mask_loss / divisor_pos) * self.alpha_mask
 
         total_loss = final_loss_cls + final_loss_box + final_loss_mask
 

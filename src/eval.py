@@ -22,6 +22,14 @@ def decode_predictions(outputs, strides=[8, 16, 32], img_size=550, score_thresh=
 
     locations = generate_locations(outputs["cls"], strides).to(cls_preds.device) # [N, 2]
 
+    # ----- THÊM ĐOẠN CODE NÀY ĐỂ TẠO TENSOR STRIDE -----
+    level_sizes = [x.shape[2] * x.shape[3] for x in outputs["cls"]]
+    stride_tensor = []
+    for size, s_val in zip(level_sizes, strides):
+        stride_tensor.append(torch.full((int(size),), float(s_val), device=cls_preds.device))
+    stride_tensor = torch.cat(stride_tensor) # [N]
+    # ----------------------------------------------------
+
     B = cls_preds.shape[0]
     results = []
 
@@ -41,6 +49,11 @@ def decode_predictions(outputs, strides=[8, 16, 32], img_size=550, score_thresh=
         boxes_f  = box_preds[i][keep]      
         coefs_f  = coef_preds[i][keep]     
         locs_f   = locations[keep]         
+
+        # ----- SỬA: NHÂN NGƯỢC VỚI STRIDE ĐỂ GIẢI MÃ TỌA ĐỘ -----
+        pos_strides = stride_tensor[keep].unsqueeze(1)
+        boxes_f  = box_preds[i][keep] * pos_strides
+        # ---------------------------------------------------------
 
         # 3. Top-k
         k = min(top_k, scores_f.shape[0])
