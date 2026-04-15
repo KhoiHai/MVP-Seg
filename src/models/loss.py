@@ -23,6 +23,7 @@ def sigmoid_focal_loss(logits, targets, alpha=0.25, gamma=2.0):
     Returns:
         loss (scalar)
     """
+    logits = logits.float()
     N, C = logits.shape
 
     # One-hot: positive locations get 1 at their class, negatives get 0 everywhere
