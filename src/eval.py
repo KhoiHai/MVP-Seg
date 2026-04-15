@@ -1,3 +1,4 @@
+%%writefile src/eval.py
 import os
 import time
 import torch
@@ -13,32 +14,28 @@ from src.dataset.coco_dataset import get_coco_dataloaders
 from src.utils.flatten_predictions import flatten_predictions
 from src.utils.generate_locations import generate_locations
 
-
 def decode_predictions(outputs, strides=[8, 16, 32], img_size=550, score_thresh=0.05, top_k=200, nms_thresh=0.5):
-    cls_preds  = flatten_predictions(outputs["cls"])    # [B, N, C]
-    box_preds  = flatten_predictions(outputs["box"])    # [B, N, 4]
-    coef_preds = flatten_predictions(outputs["coef"])   # [B, N, P]
-    proto      = outputs["proto"]                       # [B, P, Hp, Wp]
+    cls_preds  = flatten_predictions(outputs["cls"])    
+    box_preds  = flatten_predictions(outputs["box"])    
+    coef_preds = flatten_predictions(outputs["coef"])   
+    proto      = outputs["proto"]                       
 
-    locations = generate_locations(outputs["cls"], strides).to(cls_preds.device) # [N, 2]
+    locations = generate_locations(outputs["cls"], strides).to(cls_preds.device) 
 
-    # ----- THÊM ĐOẠN CODE NÀY ĐỂ TẠO TENSOR STRIDE -----
+    # ----- KHÔI PHỤC STRIDE -----
     level_sizes = [x.shape[2] * x.shape[3] for x in outputs["cls"]]
     stride_tensor = []
     for size, s_val in zip(level_sizes, strides):
         stride_tensor.append(torch.full((int(size),), float(s_val), device=cls_preds.device))
-    stride_tensor = torch.cat(stride_tensor) # [N]
-    # ----------------------------------------------------
+    stride_tensor = torch.cat(stride_tensor)
 
     B = cls_preds.shape[0]
     results = []
 
     for i in range(B):
-        # 1. Score: Dùng sigmoid vì train bằng Focal Loss
         scores_all = torch.sigmoid(cls_preds[i])        
         scores, labels = scores_all.max(dim=-1)         
 
-        # 2. Lọc sơ bộ bằng score_thresh
         keep = scores > score_thresh
         if keep.sum() == 0:
             results.append({"boxes": [], "scores": [], "labels": [], "masks": []})
@@ -46,16 +43,13 @@ def decode_predictions(outputs, strides=[8, 16, 32], img_size=550, score_thresh=
 
         scores_f = scores[keep]
         labels_f = labels[keep]
-        boxes_f  = box_preds[i][keep]      
         coefs_f  = coef_preds[i][keep]     
         locs_f   = locations[keep]         
 
-        # ----- SỬA: NHÂN NGƯỢC VỚI STRIDE ĐỂ GIẢI MÃ TỌA ĐỘ -----
+        # ----- NHÂN NGƯỢC STRIDE VÀO BOX -----
         pos_strides = stride_tensor[keep].unsqueeze(1)
         boxes_f  = box_preds[i][keep] * pos_strides
-        # ---------------------------------------------------------
 
-        # 3. Top-k
         k = min(top_k, scores_f.shape[0])
         topk_scores, topk_idx = scores_f.topk(k)
 
@@ -64,8 +58,6 @@ def decode_predictions(outputs, strides=[8, 16, 32], img_size=550, score_thresh=
         coefs_f  = coefs_f[topk_idx]
         locs_f   = locs_f[topk_idx]
 
-        # 4. Chuyển box từ LTRB sang XYXY pixel 
-        # (Đã bỏ chia img_size trong loss nên LTRB giờ là pixel thật)
         l = boxes_f[:, 0]
         t = boxes_f[:, 1]
         r = boxes_f[:, 2]
@@ -79,9 +71,8 @@ def decode_predictions(outputs, strides=[8, 16, 32], img_size=550, score_thresh=
         x2 = (px + r).clamp(0, img_size)
         y2 = (py + b).clamp(0, img_size)
 
-        xyxy_boxes = torch.stack([x1, y1, x2, y2], dim=1)  # [K, 4]
+        xyxy_boxes = torch.stack([x1, y1, x2, y2], dim=1) 
 
-        # 5. Fast NMS (Per-class)
         keep_final = []
         for cls_id in labels_f.unique():
             cls_mask   = labels_f == cls_id
@@ -101,17 +92,14 @@ def decode_predictions(outputs, strides=[8, 16, 32], img_size=550, score_thresh=
         final_scores = topk_scores[keep_final]
         final_coefs  = coefs_f[keep_final]
 
-        # 6. Tái tạo Mask: M = sigmoid(coef @ proto^T)
         P, Hp, Wp  = proto.shape[1:]
         proto_flat = proto[i].view(P, -1).T          
         mask_logits = proto_flat @ final_coefs.T      
         mask_logits = mask_logits.T.view(-1, Hp, Wp)  
         
-        # Upsample mask lên kích thước ảnh gốc
         pred_masks = F.interpolate(mask_logits.unsqueeze(0), size=(img_size, img_size), mode='bilinear', align_corners=False).squeeze(0)
         pred_masks = torch.sigmoid(pred_masks)
 
-        # Crop mask theo Bounding Box để bỏ viền nhiễu
         for j in range(len(final_boxes)):
             bx1, by1, bx2, by2 = map(int, final_boxes[j].clamp(0, img_size-1))
             crop_mask = torch.zeros_like(pred_masks[j])
@@ -123,11 +111,10 @@ def decode_predictions(outputs, strides=[8, 16, 32], img_size=550, score_thresh=
             "boxes":  final_boxes,
             "scores": final_scores,
             "labels": final_labels,
-            "masks":  pred_masks > 0.5 # Binarize
+            "masks":  pred_masks > 0.5 
         })
 
     return results
-
 
 @torch.no_grad()
 def evaluate(model_path, data_root, num_classes=80, device=None, img_size=550):
@@ -135,7 +122,6 @@ def evaluate(model_path, data_root, num_classes=80, device=None, img_size=550):
         device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Bắt đầu đánh giá trên: {device}")
 
-    # Khởi tạo mô hình
     model = MVP_Seg(
         model_name="nvidia/MambaVision-T-1K",
         pretrained=False,
@@ -143,7 +129,6 @@ def evaluate(model_path, data_root, num_classes=80, device=None, img_size=550):
         num_prototypes=32
     ).to(device)
 
-    # Load checkpoint
     ckpt = torch.load(model_path, map_location=device)
     if "model_state" in ckpt:
         model.load_state_dict(ckpt["model_state"])
@@ -152,12 +137,10 @@ def evaluate(model_path, data_root, num_classes=80, device=None, img_size=550):
     model.eval()
     print(f"Đã tải trọng số từ: {model_path}")
 
-    # Tải Dataloader (batch_size=1 để tính FPS chuẩn)
     _, val_loader = get_coco_dataloaders(
         data_root=data_root, batch_size=1, num_workers=2, subset_size=None, img_size=img_size
     )
 
-    # Load COCO Ground Truth và tạo bộ ánh xạ Category ID
     ann_file = os.path.join(data_root, "annotations/instances_val2017.json")
     coco_gt = COCO(ann_file)
     cat_ids = coco_gt.getCatIds()
@@ -176,7 +159,12 @@ def evaluate(model_path, data_root, num_classes=80, device=None, img_size=550):
         img_id = targets[0]["img_id"]
         if isinstance(img_id, torch.Tensor): img_id = int(img_id.item())
 
-        # Tính FPS
+        # --- LẤY KÍCH THƯỚC GỐC ĐỂ RESIZE ---
+        img_info = coco_gt.loadImgs(img_id)[0]
+        orig_h, orig_w = img_info['height'], img_info['width']
+        scale_x = orig_w / img_size
+        scale_y = orig_h / img_size
+
         if device == "cuda": torch.cuda.synchronize()
         t0 = time.time()
         
@@ -186,33 +174,39 @@ def evaluate(model_path, data_root, num_classes=80, device=None, img_size=550):
         elapsed = time.time() - t0
         fps_list.append(1.0 / elapsed if elapsed > 0 else 0)
 
-        # Giải mã
         detections = decode_predictions(outputs, img_size=img_size)[0]
         boxes  = detections["boxes"].cpu().numpy()
         scores = detections["scores"].cpu().numpy()
         labels = detections["labels"].cpu().numpy()
-        masks  = detections["masks"].cpu().numpy() # [K, H, W]
+        masks  = detections["masks"].cpu()
 
         for j in range(len(scores)):
             x1, y1, x2, y2 = boxes[j]
-            w, h = x2 - x1, y2 - y1
             
+            # Khôi phục tọa độ hộp
+            x1 *= scale_x
+            x2 *= scale_x
+            y1 *= scale_y
+            y2 *= scale_y
+            
+            w, h = x2 - x1, y2 - y1
             if w <= 0 or h <= 0: continue
             
-            # Encode Mask theo chuẩn RLE của COCO
-            mask_rle = maskUtils.encode(np.asfortranarray(masks[j].astype(np.uint8)))
+            # Khôi phục mặt nạ
+            mask_tensor = masks[j].unsqueeze(0).unsqueeze(0).float()
+            orig_mask = F.interpolate(mask_tensor, size=(orig_h, orig_w), mode='nearest').squeeze().numpy()
+            orig_mask = orig_mask.astype(np.uint8)
+            
+            mask_rle = maskUtils.encode(np.asfortranarray(orig_mask))
             mask_rle['counts'] = mask_rle['counts'].decode('utf-8')
 
             coco_preds.append({
                 "image_id": img_id,
-                "category_id": label_to_cat_id[int(labels[j])], # Ánh xạ lại ID chuẩn
+                "category_id": label_to_cat_id[int(labels[j])], 
                 "bbox": [float(x1), float(y1), float(w), float(h)],
                 "segmentation": mask_rle,
                 "score": float(scores[j])
             })
-            
-        if (batch_idx + 1) % 200 == 0:
-            print(f"  [{batch_idx + 1}/{len(val_loader)}] ảnh đã được xử lý...")
 
     if len(coco_preds) == 0:
         print("Mô hình không tạo ra dự đoán nào!")
@@ -235,11 +229,9 @@ def evaluate(model_path, data_root, num_classes=80, device=None, img_size=550):
     print(f"Average FPS : {np.mean(fps_list):.1f}")
     print(f"Median  FPS : {np.median(fps_list):.1f}")
 
-
 if __name__ == "__main__":
-    # Cấu hình đường dẫn cho Kaggle (Hoặc máy local)
     evaluate(
-        model_path="/kaggle/working/checkpoints/coco/best.pth", # Thay đổi theo vị trí save
-        data_root="/kaggle/input/coco2017",                     # Thay đổi theo dataset add vào
+        model_path="/kaggle/working/checkpoints/coco/best.pth", 
+        data_root="/kaggle/input/datasets/awsaf49/coco-2017-dataset/coco2017",
         num_classes=80
     )
