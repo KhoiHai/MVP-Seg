@@ -82,10 +82,13 @@ def evaluate_mAP(model, val_loader, device, data_root):
                 x1, y1, x2, y2 = boxes[j]
                 
                 # --- SỬA: Khôi phục tọa độ box về ảnh gốc ---
-                x1 *= scale_x
-                x2 *= scale_x
-                y1 *= scale_y
-                y2 *= scale_y
+                scale_x = orig_w / img_size
+                scale_y = orig_h / img_size
+                
+                x1 = x1 * scale_x
+                x2 = x2 * scale_x
+                y1 = y1 * scale_y
+                y2 = y2 * scale_y
                 
                 w, h = x2 - x1, y2 - y1
                 if w <= 0 or h <= 0: continue
