@@ -11,6 +11,7 @@ from src.dataset.coco_dataset import get_coco_dataloaders
 from src.dataset.sbd_dataset import get_sbd_dataloaders
 from src.models.loss import Model_Loss
 from src.eval import decode_predictions
+import torch.nn.functional as F
 
 
 def move_targets_to_device(targets, device):
@@ -220,7 +221,7 @@ def train(config):
                 scaler.load_state_dict(checkpoint["scaler_state"])
 
             start_epoch = checkpoint.get("epoch", 0) + 1
-            best_loss = checkpoint.get("best_loss", float("inf"))
+            best_mAP = checkpoint.get("best_mAP", 0.0)
 
             print(f" Resume at epoch {start_epoch}")
 
@@ -329,10 +330,6 @@ def train(config):
         os.makedirs(config["save_dir"], exist_ok=True)
 
         if (epoch + 1) % 10 == 0:
-            print(f" Đang đánh giá mAP trên tập Validation (Epoch {epoch+1})...")
-            current_mAP = evaluate_mAP(model, val_loader, device, config["data_root"])
-            print(f" mAP hiện tại: {current_mAP:.4f} (Best: {best_mAP:.4f})")
-
             # Tạo dictionary checkpoint chung
             checkpoint = {
                 "epoch": epoch,
@@ -345,6 +342,10 @@ def train(config):
             # Lưu file checkpoint theo tên epoch 
             torch.save(checkpoint, os.path.join(config["save_dir"], f"epoch{epoch+1}.pth"))
             print(f" Đã lưu checkpoint: epoch_{epoch+1}.pth")
+
+            print(f" Đang đánh giá mAP trên tập Validation (Epoch {epoch+1})...")
+            current_mAP = evaluate_mAP(model, val_loader, device, config["data_root"])
+            print(f" mAP hiện tại: {current_mAP:.4f} (Best: {best_mAP:.4f})")
 
             # Kiểm tra xem có vượt kỷ lục mAP không
             if current_mAP > best_mAP:
