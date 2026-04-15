@@ -45,7 +45,7 @@ def poly_lr_scheduler(optimizer, base_lrs, curr_iter, max_iter, power=1.0):
 # -------------------------
 # EVALUATE mAP
 # -------------------------
-def evaluate_mAP(model, val_loader, device, data_root):
+def evaluate_mAP(model, val_loader, device, data_root, img_size=550): # Đã thêm img_size
     model.eval()
     ann_file = os.path.join(data_root, "annotations/instances_val2017.json")
     coco_gt = COCO(ann_file)
@@ -62,29 +62,25 @@ def evaluate_mAP(model, val_loader, device, data_root):
             img_id = targets[0]["img_id"]
             if isinstance(img_id, torch.Tensor): img_id = int(img_id.item())
             
-            # --- SỬA: Lấy kích thước ảnh gốc từ COCO GT ---
             img_info = coco_gt.loadImgs(img_id)[0]
             orig_h, orig_w = img_info['height'], img_info['width']
             
             outputs = model(images)
-            detections = decode_predictions(outputs)[0] # Dữ liệu đang ở không gian 550x550
+            detections = decode_predictions(outputs)[0]
             
             boxes = detections["boxes"].cpu().numpy()
             scores = detections["scores"].cpu().numpy()
             labels = detections["labels"].cpu().numpy()
-            masks = detections["masks"].cpu() # Giữ nguyên dạng Tensor để resize
+            masks = detections["masks"].cpu()
             
-            # Tính tỷ lệ quy đổi từ 550x550 về lại kích thước gốc
-            scale_x = orig_w / 550.0
-            scale_y = orig_h / 550.0
+            # Tính tỷ lệ quy đổi 1 LẦN DUY NHẤT
+            scale_x = orig_w / img_size
+            scale_y = orig_h / img_size
             
             for j in range(len(scores)):
                 x1, y1, x2, y2 = boxes[j]
                 
-                # --- SỬA: Khôi phục tọa độ box về ảnh gốc ---
-                scale_x = orig_w / img_size
-                scale_y = orig_h / img_size
-                
+                # Nhân trực tiếp, không khai báo lại biến scale
                 x1 = x1 * scale_x
                 x2 = x2 * scale_x
                 y1 = y1 * scale_y
@@ -93,8 +89,7 @@ def evaluate_mAP(model, val_loader, device, data_root):
                 w, h = x2 - x1, y2 - y1
                 if w <= 0 or h <= 0: continue
                 
-                # --- SỬA: Khôi phục mặt nạ về kích thước gốc ---
-                mask_tensor = masks[j].unsqueeze(0).unsqueeze(0).float() # [1, 1, 550, 550]
+                mask_tensor = masks[j].unsqueeze(0).unsqueeze(0).float()
                 orig_mask = F.interpolate(mask_tensor, size=(orig_h, orig_w), mode='nearest').squeeze().numpy()
                 orig_mask = orig_mask.astype(np.uint8)
                 
@@ -121,7 +116,6 @@ def evaluate_mAP(model, val_loader, device, data_root):
     
     model.train() 
     return coco_eval.stats[0]
-
 # -------------------------
 # TRAIN
 # -------------------------
