@@ -1,4 +1,3 @@
-%%writefile src/eval.py
 import os
 import time
 import torch
