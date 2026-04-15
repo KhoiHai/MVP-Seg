@@ -64,7 +64,7 @@ AREA_MEDIUM = 96 ** 2       # < 9216 px²
 
 # Theo proposal (Bảng 1): Top-k = 200, NMS thresh = 0.5
 TOP_K       = 200
-NMS_THRESH  = 0.2
+NMS_THRESH  = 0.5
 
 # Strides tương ứng với N2, N3, N4 (khớp với train.py / loss.py)
 STRIDES     = [8, 16, 32]

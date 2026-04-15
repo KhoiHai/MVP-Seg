@@ -118,7 +118,7 @@ class Model_Loss(nn.Module):
         self,
         num_classes=20,
         alpha_cls=1.0,
-        alpha_box=5.0,    # tăng từ 1.5 để box loss đủ mạnh
+        alpha_box=1.5,    # tăng từ 1.5 để box loss đủ mạnh
         alpha_mask=6.125,
         strides=[8, 16, 32],
         img_size=550,
@@ -211,25 +211,27 @@ class Model_Loss(nn.Module):
 
             # Negative mining: pos:neg = 1:3
             # Áp dụng nhất quán cho cả ảnh có và không có object
-            neg_mask = ~pos_mask
-            num_pos  = pos_mask.sum()
-            num_neg  = neg_mask.sum()
-            max_neg  = num_pos * 3 if num_pos > 0 else 100
+            # neg_mask = ~pos_mask
+            # num_pos  = pos_mask.sum()
+            # num_neg  = neg_mask.sum()
+            # max_neg  = num_pos * 3 if num_pos > 0 else 100
 
-            if num_neg > max_neg:
-                neg_idx      = torch.where(neg_mask)[0]
-                perm         = torch.randperm(num_neg, device=neg_idx.device)[:max_neg]
-                new_neg_mask = torch.zeros_like(neg_mask)
-                new_neg_mask[neg_idx[perm]] = True
-                neg_mask     = new_neg_mask
+            # if num_neg > max_neg:
+            #     neg_idx      = torch.where(neg_mask)[0]
+            #     perm         = torch.randperm(num_neg, device=neg_idx.device)[:max_neg]
+            #     new_neg_mask = torch.zeros_like(neg_mask)
+            #     new_neg_mask[neg_idx[perm]] = True
+            #     neg_mask     = new_neg_mask
 
-            # Chỉ tính loss trên pos + selected neg
-            final_mask       = pos_mask | neg_mask
-            cls_pred_sampled = cls_preds[i][final_mask]     # [K, C]
-            gt_cls_sampled   = gt_cls_target[final_mask]    # [K]
+            # # Chỉ tính loss trên pos + selected neg
+            # final_mask       = pos_mask | neg_mask
+            # cls_pred_sampled = cls_preds[i][final_mask]     # [K, C]
+            # gt_cls_sampled   = gt_cls_target[final_mask]    # [K]
 
-            all_cls_loss          += sigmoid_focal_loss(cls_pred_sampled, gt_cls_sampled)
-            total_num_cls_samples += final_mask.sum().item()
+            # all_cls_loss          += sigmoid_focal_loss(cls_pred_sampled, gt_cls_sampled)
+            # total_num_cls_samples += final_mask.sum().item()
+            # Áp dụng focal loss trên toàn bộ locations, nhưng chỉ có positive mới có target class, negative sẽ có target -1 và được ignore trong loss
+            all_cls_loss += sigmoid_focal_loss(cls_preds[i], gt_cls_target)
 
             # Không có positive → bỏ qua box và mask loss
             if n_pos == 0:
@@ -251,9 +253,12 @@ class Model_Loss(nn.Module):
             target_ltrb = torch.stack([l, t, r, b], dim=1).clamp(min=0.1)
 
             # Normalize về [0,1] để khớp với scale của box_preds
-            target_ltrb_norm = target_ltrb / self.img_size
+            # target_ltrb_norm = target_ltrb / self.img_size
+            # SỬA: KHÔNG chia cho self.img_size nữa vì box_preds dùng softplus
+            # SỬA: Giảm beta của smooth_l1_loss xuống 0.1 để phù hợp với pixel scale
+            all_box_loss += smooth_l1_loss(pos_box_preds, target_ltrb, beta=0.1)
 
-            all_box_loss += smooth_l1_loss(pos_box_preds, target_ltrb_norm)
+            # all_box_loss += smooth_l1_loss(pos_box_preds, target_ltrb_norm)
 
             # ─────────────────────────────────────────
             # 4.4: Mask loss
@@ -305,12 +310,14 @@ class Model_Loss(nn.Module):
         # STEP 5: Normalize và combine losses
         # ═══════════════════════════════════════════════
         # cls: chia theo số location thực tế được sample (nhất quán với negative mining)
-        divisor_cls      = max(total_num_cls_samples, 1)
-        divisor_box_mask = max(total_num_pos, 1)
+        # divisor_cls      = max(total_num_cls_samples, 1)
+        # divisor_box_mask = max(total_num_pos, 1)
+        # SỬA: Tất cả đều normalize dựa trên số lượng POSITIVE samples
+        divisor = max(total_num_pos, 1)
 
-        final_loss_cls  = (all_cls_loss  / divisor_cls)      * self.alpha_cls
-        final_loss_box  = (all_box_loss  / divisor_box_mask) * self.alpha_box
-        final_loss_mask = (all_mask_loss / divisor_box_mask) * self.alpha_mask
+        final_loss_cls  = (all_cls_loss  / divisor)      * self.alpha_cls
+        final_loss_box  = (all_box_loss  / divisor) * self.alpha_box
+        final_loss_mask = (all_mask_loss / divisor) * self.alpha_mask
 
         total_loss = final_loss_cls + final_loss_box + final_loss_mask
 

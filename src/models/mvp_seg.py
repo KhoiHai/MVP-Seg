@@ -27,13 +27,13 @@ class MVP_Seg(nn.Module):
         self.backbone = MambaVision(model_name = model_name, pretrained = pretrained)
 
         # Neck
-        self.neck = PANet_Neck(out_channels = shared_channel)
+        self.neck = PANet_Neck(out_channels = shared_channel, norm="gn")
 
         # Prediction Head
-        self.pred_head = Prediction_Head(in_channels = shared_channel, num_classes = num_classes, num_prototypes = num_prototypes)
+        self.pred_head = Prediction_Head(in_channels = shared_channel, num_classes = num_classes, num_prototypes = num_prototypes, norm="gn")
 
         # Protonet
-        self.proto = Protonet(in_channels = shared_channel, num_prototypes = num_prototypes)
+        self.proto = Protonet(in_channels = shared_channel, num_prototypes = num_prototypes, norm="gn")
     
     def forward(self, x):
         '''
@@ -59,7 +59,7 @@ class MVP_Seg(nn.Module):
         coef_out = [torch.tanh(c) for c in coef_out]
 
         # Prototype (Only N2 process)
-        proto_out = torch.sigmoid(self.proto(neck_feature_map[0]))
+        proto_out = F.relu(self.proto(neck_feature_map[0]))
 
         return{
             "cls": cls_out,

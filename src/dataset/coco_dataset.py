@@ -1,6 +1,7 @@
 import os
 import torch
 import numpy as np
+import random
 from torch.utils.data import Dataset, DataLoader
 from pycocotools.coco import COCO
 from PIL import Image
@@ -35,6 +36,8 @@ class COCODataset(Dataset):
 
         # Limit dataset size for subset training
         if subset_size is not None:
+            random.seed(42)
+            random.shuffle(self.img_ids)
             self.img_ids = self.img_ids[:subset_size]
 
         # Remap COCO category IDs (sparse 1-90) to dense 0-based class indices
@@ -80,17 +83,15 @@ class COCODataset(Dataset):
         boxes  = np.array(boxes,  dtype = np.float32)                    # [N, 4]
         labels = np.array(labels, dtype = np.int64)                      # [N]
         # --- mask fix ---
-        mask = (self.coco.annToMask(ann) > 0).astype(np.float32)
+        # mask = (self.coco.annToMask(ann) > 0).astype(np.float32)
 
         # --- transform ---
         if self.transforms:
-            mask_list = [masks[i] for i in range(masks.shape[0])]
-
             transformed = self.transforms(
                 image=image,
                 bboxes=boxes.tolist(),
                 bbox_labels=labels.tolist(),
-                masks=mask_list
+                masks=masks 
             )
 
             if len(transformed["bboxes"]) == 0:
@@ -105,6 +106,7 @@ class COCODataset(Dataset):
         else:
             # Fallback: convert to tensor manually without augmentation
             image = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
+            masks = torch.from_numpy(np.stack(masks)).float()
 
         return{
             "image":  image,    # [3, img_size, img_size]
