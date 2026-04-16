@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 from src.models.neck.panet_neck import ConvNormAct
 
@@ -29,6 +30,17 @@ class Prediction_Head(nn.Module):
         self.cls_head = nn.Conv2d(in_channels, num_classes, 1)
         self.box_head = nn.Conv2d(in_channels, 4, 1)
         self.coef_head = nn.Conv2d(in_channels, num_prototypes, 1)
+        
+        # ── Prior-prob initialization cho cls_head ─────────────────────────
+        # Mục tiêu: tại bước đầu tiên, sigmoid(bias) ≈ prior_prob = 0.01
+        # → model dự đoán "gần như không có object" thay vì đoán ngẫu nhiên
+        # → Focal Loss không bị spike ~11.7 ngay epoch 1 → tránh cls collapse
+        # Nguồn: RetinaNet paper (Lin et al. 2017), Section 4.1
+        prior_prob  = 0.01
+        bias_value  = -math.log((1 - prior_prob) / prior_prob)  # ≈ -4.595
+ 
+        nn.init.normal_(self.cls_head.weight, std=0.01)
+        nn.init.constant_(self.cls_head.bias, bias_value)
 
     def forward(self, features):
         '''
