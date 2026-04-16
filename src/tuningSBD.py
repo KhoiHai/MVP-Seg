@@ -76,7 +76,7 @@ def train(config):
     finetune_path = config.get("finetune_path", "")
     if os.path.exists(finetune_path):
         print(f"\n[Finetune] Loading COCO checkpoint: {finetune_path}")
-        ckpt       = torch.load(finetune_path, map_location=device)
+        ckpt = torch.load(finetune_path, map_location=device, weights_only=False)
         state_dict = ckpt.get("model_state", ckpt)
 
         model_dict      = model.state_dict()
@@ -114,7 +114,7 @@ def train(config):
         resume_path = config.get("resume_path", "")
         if os.path.exists(resume_path):
             print(f"[Resume] Loading: {resume_path}")
-            ckpt = torch.load(resume_path, map_location=device)
+            ckpt = torch.load(resume_path, map_location=device, weights_only=False)
             model.load_state_dict(ckpt["model_state"])
             optimizer.load_state_dict(ckpt["optimizer_state"])
             if "scaler_state" in ckpt:
