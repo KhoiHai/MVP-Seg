@@ -329,7 +329,7 @@ class Model_Loss(nn.Module):
         # divisor_cls      = max(total_num_cls_samples, 1)
         # divisor_box_mask = max(total_num_pos, 1)
         # SỬA: Tất cả đều normalize dựa trên số lượng POSITIVE samples
-        divisor_cls  = max(total_num_loc, 1)
+        divisor_cls  = max(total_num_pos, 1)
         divisor_pos  = max(total_num_pos, 1)
 
         final_loss_cls  = (all_cls_loss  / divisor_cls) * self.alpha_cls
