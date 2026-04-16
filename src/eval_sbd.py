@@ -113,6 +113,12 @@ def decode_predictions(outputs, score_thresh=0.05):
     locations = generate_locations(outputs["cls"], STRIDES)  # [N, 2]
     locations = locations.to(cls_preds.device)
 
+    level_sizes = [x.shape[2] * x.shape[3] for x in outputs["cls"]]
+    stride_tensor = []
+    for size, s_val in zip(level_sizes, STRIDES):
+        stride_tensor.append(torch.full((int(size),), float(s_val), device=cls_preds.device))
+    stride_tensor = torch.cat(stride_tensor)
+
     B = cls_preds.shape[0]
     results = []
 
@@ -136,9 +142,11 @@ def decode_predictions(outputs, score_thresh=0.05):
 
         scores_f = scores[keep]
         labels_f = labels[keep]
-        boxes_f  = box_preds[i][keep]      # [K, 4] ltrb normalize
+        # boxes_f  = box_preds[i][keep]      # [K, 4] ltrb normalize
         coefs_f  = coef_preds[i][keep]     # [K, P]
         locs_f   = locations[keep]         # [K, 2] (px, py)
+        pos_strides = stride_tensor[keep].unsqueeze(1)
+        boxes_f  = box_preds[i][keep] * pos_strides  # [K, 4] ltrb normalize → scale theo stride để thành pixel space
 
         # ── Top-k (theo proposal: k = 200) ───────────────────────
         k = min(TOP_K, scores_f.shape[0])
@@ -153,10 +161,10 @@ def decode_predictions(outputs, score_thresh=0.05):
         # box_preds là [l, t, r, b] đã normalize chia cho img_size
         # location (px, py) là tâm của vùng dự đoán
         # x1 = px - l*IMG_SIZE,  y1 = py - t*IMG_SIZE, ...
-        l = boxes_f[:, 0] * IMG_SIZE
-        t = boxes_f[:, 1] * IMG_SIZE
-        r = boxes_f[:, 2] * IMG_SIZE
-        b = boxes_f[:, 3] * IMG_SIZE
+        l = boxes_f[:, 0]
+        t = boxes_f[:, 1]
+        r = boxes_f[:, 2]
+        b = boxes_f[:, 3]
 
         px = locs_f[:, 0].float()
         py = locs_f[:, 1].float()

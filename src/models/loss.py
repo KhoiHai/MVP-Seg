@@ -273,7 +273,7 @@ class Model_Loss(nn.Module):
 
             # Normalize về [0,1] để khớp với scale của box_preds
             target_ltrb_norm = target_ltrb_px / pos_strides.unsqueeze(1)
-            target_ltrb_norm = target_ltrb_norm.clamp(max=5.0) # Ép giới hạn target khớp với Softplus
+            target_ltrb_norm = target_ltrb_norm.clamp(max=10.0) # Ép giới hạn target khớp với Softplus
             all_box_loss += smooth_l1_loss(pos_box_preds, target_ltrb_norm, beta=1.0) # Trả beta về 1.0
 
             # ─────────────────────────────────────────
