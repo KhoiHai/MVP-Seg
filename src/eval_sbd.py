@@ -323,6 +323,7 @@ def evaluate_sbd(
     model_path,
     data_root    = "/content/SBD",
     num_classes  = 20,
+    num_prototypes = 32,
     score_thresh = 0.05,
     device       = None,
     verbose      = True,
@@ -354,7 +355,7 @@ def evaluate_sbd(
         model_name     = "nvidia/MambaVision-T-1K",
         pretrained     = False,    # Không load pretrained khi eval
         num_classes    = num_classes,
-        num_prototypes = 32,       # Theo Bảng 1 proposal: P = 32
+        num_prototypes = num_prototypes,       # Theo Bảng 1 proposal: P = 32
     ).to(device)
 
     if not os.path.exists(model_path):

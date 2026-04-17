@@ -214,6 +214,7 @@ def train(config):
                 model_path   = os.path.join(config["save_dir"], "last.pth"),
                 data_root    = config["data_root"],
                 num_classes  = config["num_classes"],
+                num_prototypes = config.get("num_prototypes", 32),
                 score_thresh = 0.05,
                 device       = device,
                 verbose      = True,
