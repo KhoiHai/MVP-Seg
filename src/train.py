@@ -333,15 +333,16 @@ def train(config):
         # -------------------------
         os.makedirs(config["save_dir"], exist_ok=True)
 
+        checkpoint_last = {
+            "epoch": epoch,
+            "model_state": model.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+            "scaler_state": scaler.state_dict(),
+            "best_mAP": best_mAP 
+        }
+        torch.save(checkpoint_last, os.path.join(config["save_dir"], "last.pth"))
+
         if (epoch + 1) % 10 == 0:
-            # Tạo dictionary checkpoint chung
-            checkpoint = {
-                "epoch": epoch,
-                "model_state": model.state_dict(),
-                "optimizer_state": optimizer.state_dict(),
-                "scaler_state": scaler.state_dict(),
-                "best_mAP": best_mAP 
-            }
 
             # Lưu file checkpoint theo tên epoch 
             torch.save(checkpoint, os.path.join(config["save_dir"], f"epoch{epoch+1}.pth"))
