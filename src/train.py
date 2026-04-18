@@ -204,7 +204,7 @@ def train(config):
         if os.path.exists(path):
             print(f" Resuming from {path}")
 
-            checkpoint = torch.load(path, map_location=device)
+            checkpoint = torch.load(path, map_location=device, weights_only=False)
 
             model.load_state_dict(checkpoint["model_state"])
 
