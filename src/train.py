@@ -13,6 +13,12 @@ from src.models.loss import Model_Loss
 from src.eval import decode_predictions
 import torch.nn.functional as F
 
+import torch.serialization
+
+torch.serialization.add_safe_globals([
+    np.core.multiarray.scalar,
+    np.dtype
+])
 
 def move_targets_to_device(targets, device):
     new_targets = []
