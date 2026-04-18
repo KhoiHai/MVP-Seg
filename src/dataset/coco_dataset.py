@@ -211,7 +211,7 @@ def get_coco_dataloaders(data_root, batch_size = 5, num_workers = 2,
         img_dir      = os.path.join(data_root, "val2017"),
         ann_file     = os.path.join(data_root, "annotations/instances_val2017.json"),
         transforms   = get_transforms(train = False, img_size = img_size),
-        subset_size  = 2000       # Smaller val subset for faster evaluation
+        subset_size  = None       # Smaller val subset for faster evaluation
     )
 
     train_loader = DataLoader(
