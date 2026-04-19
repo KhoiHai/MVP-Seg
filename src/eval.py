@@ -6,7 +6,7 @@ import numpy as np
 from pycocotools.coco import COCO
 from pycocotools.cocoeval import COCOeval
 import pycocotools.mask as maskUtils
-from torchvision.ops import nms
+from torchvision.ops import batched_nms
 
 from src.models.mvp_seg import MVP_Seg
 from src.dataset.coco_dataset import get_coco_dataloaders
@@ -72,20 +72,14 @@ def decode_predictions(outputs, strides=[8, 16, 32], img_size=550, score_thresh=
 
         xyxy_boxes = torch.stack([x1, y1, x2, y2], dim=1) 
 
-        keep_final = []
-        for cls_id in labels_f.unique():
-            cls_mask   = labels_f == cls_id
-            cls_boxes  = xyxy_boxes[cls_mask]
-            cls_scores = topk_scores[cls_mask]
-            keep_cls   = nms(cls_boxes, cls_scores, nms_thresh)
-            global_idx = cls_mask.nonzero(as_tuple=True)[0]
-            keep_final.append(global_idx[keep_cls])
+        keep_final = batched_nms(xyxy_boxes, topk_scores, labels_f, nms_thresh)
 
         if len(keep_final) == 0:
             results.append({"boxes": [], "scores": [], "labels": [], "masks": []})
             continue
 
-        keep_final   = torch.cat(keep_final)
+        # Giới hạn tối đa 100 detection theo chuẩn COCO (maxDets=100)
+        keep_final = keep_final[:100]
         final_boxes  = xyxy_boxes[keep_final]
         final_labels = labels_f[keep_final]
         final_scores = topk_scores[keep_final]
@@ -193,8 +187,8 @@ def evaluate(model_path, data_root, num_classes=80, device=None, img_size=550):
             
             # Khôi phục mặt nạ
             mask_tensor = masks[j].unsqueeze(0).unsqueeze(0).float()
-            orig_mask = F.interpolate(mask_tensor, size=(orig_h, orig_w), mode='nearest').squeeze().numpy()
-            orig_mask = orig_mask.astype(np.uint8)
+            orig_mask_tensor = F.interpolate(mask_tensor, size=(orig_h, orig_w), mode='bilinear', align_corners=False).squeeze()
+            orig_mask = (orig_mask_tensor > 0.5).cpu().numpy().astype(np.uint8)
             
             mask_rle = maskUtils.encode(np.asfortranarray(orig_mask))
             mask_rle['counts'] = mask_rle['counts'].decode('utf-8')

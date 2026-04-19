@@ -96,8 +96,20 @@ def evaluate_mAP(model, val_loader, device, data_root, img_size=550): # Đã th�
                 if w <= 0 or h <= 0: continue
                 
                 mask_tensor = masks[j].unsqueeze(0).unsqueeze(0).float()
-                orig_mask = F.interpolate(mask_tensor, size=(orig_h, orig_w), mode='nearest').squeeze().numpy()
-                orig_mask = orig_mask.astype(np.uint8)
+                orig_mask_tensor = F.interpolate(mask_tensor, size=(orig_h, orig_w), mode='bilinear', align_corners=False).squeeze()
+                orig_mask = (orig_mask_tensor > 0.5).cpu().numpy().astype(np.uint8)
+                
+                # Mask Cropping: xóa nhiễu ngoài bounding box đã scale
+                crop_x1 = max(0, int(np.floor(x1)))
+                crop_y1 = max(0, int(np.floor(y1)))
+                crop_x2 = min(orig_w, int(np.ceil(x2)))
+                crop_y2 = min(orig_h, int(np.ceil(y2)))
+                cropped = np.zeros_like(orig_mask)
+                cropped[crop_y1:crop_y2, crop_x1:crop_x2] = orig_mask[crop_y1:crop_y2, crop_x1:crop_x2]
+                orig_mask = cropped
+
+                if orig_mask.sum() == 0:
+                    continue
                 
                 mask_rle = maskUtils.encode(np.asfortranarray(orig_mask))
                 mask_rle['counts'] = mask_rle['counts'].decode('utf-8')
@@ -345,7 +357,7 @@ def train(config):
         if (epoch + 1) % 10 == 0:
 
             # Lưu file checkpoint theo tên epoch 
-            torch.save(checkpoint, os.path.join(config["save_dir"], f"epoch{epoch+1}.pth"))
+            torch.save(checkpoint_last, os.path.join(config["save_dir"], f"epoch{epoch+1}.pth"))
             print(f" Đã lưu checkpoint: epoch_{epoch+1}.pth")
 
             print(f" Đang đánh giá mAP trên tập Validation (Epoch {epoch+1})...")
@@ -355,10 +367,10 @@ def train(config):
             # Kiểm tra xem có vượt kỷ lục mAP không
             if current_mAP > best_mAP:
                 best_mAP = current_mAP
-                checkpoint["best_mAP"] = best_mAP # Cập nhật lại mAP cao nhất vào dict
+                checkpoint_last["best_mAP"] = best_mAP # Cập nhật lại mAP cao nhất vào dict
                 
                 # Lưu đè file best.pth
-                torch.save(checkpoint, os.path.join(config["save_dir"], "best.pth"))
+                torch.save(checkpoint_last, os.path.join(config["save_dir"], "best.pth"))
                 print(f" Đã lưu Best Model mới tại epoch {epoch+1} với mAP: {best_mAP:.4f}!")
 
 # ------------------------------
