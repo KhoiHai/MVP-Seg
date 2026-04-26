@@ -596,56 +596,73 @@ def evaluate_sbd(
 
 
 # ════════════════════════════════════════════════════════════════
-# PHẦN 5: VISUALIZATION (tùy chọn — hữu ích trên Colab)
+# PHẦN 5: VISUALIZATION (tùy chọn — hữu ích trên Colab/Kaggle)
 # ════════════════════════════════════════════════════════════════
+
+# Bảng màu 20 instance — mỗi màu là RGBA
+_VIS_COLORS = [
+    (1.00, 0.20, 0.20),  # red
+    (0.20, 0.80, 0.20),  # green
+    (0.20, 0.40, 1.00),  # blue
+    (1.00, 0.80, 0.00),  # yellow
+    (1.00, 0.20, 1.00),  # magenta
+    (0.00, 0.90, 0.90),  # cyan
+    (1.00, 0.50, 0.00),  # orange
+    (0.60, 0.20, 1.00),  # purple
+    (0.00, 0.60, 0.30),  # dark green
+    (0.80, 0.10, 0.30),  # crimson
+    (0.20, 0.60, 1.00),  # sky blue
+    (0.70, 0.70, 0.00),  # olive
+    (0.00, 0.70, 0.70),  # teal
+    (0.80, 0.00, 0.60),  # violet
+    (1.00, 0.60, 0.70),  # pink
+    (0.50, 0.90, 0.50),  # light green
+    (0.60, 0.70, 1.00),  # light blue
+    (1.00, 0.90, 0.50),  # light yellow
+    (0.50, 1.00, 0.90),  # light cyan
+    (0.90, 0.60, 1.00),  # light purple
+]
+
 
 def visualize_predictions(
     model,
     val_loader,
     device,
-    num_samples  = 4,
-    score_thresh = 0.3,    # Dùng ngưỡng cao hơn khi visualize
+    num_samples  = 20,
+    score_thresh = 0.3,
     mask_thresh  = 0.5,
-    save_dir     = None,   # Set để lưu file thay vì plt.show()
+    save_dir     = None,   # None → plt.show(); str → lưu PNG vào thư mục đó
+    zip_path     = None,   # str → sau khi lưu xong sẽ zip toàn bộ save_dir vào đây
+                           # Ví dụ: "/kaggle/working/vis_results.zip"
+                           # Chỉ có tác dụng khi save_dir != None
 ):
     """
-    Hiển thị kết quả bbox + mask overlay lên ảnh gốc.
+    Vẽ kết quả phân đoạn MVP-Seg lên ảnh gốc — chỉ 1 panel prediction
+    (không có panel ảnh gốc bên cạnh), giống style figure YOLACT paper.
 
-    Crop mask theo proposal trang 8:
-      "cần giới hạn mask trong vùng của đối tượng bằng cách crop"
+    Mỗi instance được tô màu overlay bán trong suốt + đường viền contour
+    + bounding box + label text, nhất quán với hình minh họa bài báo.
 
     Args:
-        save_dir (str): Nếu set, lưu PNG ra thư mục (tốt cho Colab).
-                        Nếu None, gọi plt.show() trực tiếp.
+        model        : MVP_Seg đã load weight, ở chế độ eval.
+        val_loader   : DataLoader của SBD val set (batch_size=1).
+        device       : 'cuda' / 'cpu'.
+        num_samples  : Số ảnh muốn vẽ (mặc định 20).
+        score_thresh : Ngưỡng confidence để hiển thị detection.
+        mask_thresh  : Ngưỡng nhị phân hóa soft mask.
+        save_dir     : Thư mục lưu PNG. None → hiển thị trực tiếp.
+        zip_path     : Nếu đặt, zip toàn bộ save_dir vào file này sau khi vẽ xong.
     """
+    import zipfile
+    import matplotlib
+    matplotlib.use("Agg")          # backend không cần GUI — an toàn trên Kaggle/Colab
     import matplotlib.pyplot as plt
     import matplotlib.patches as mpatches
-    import matplotlib.colors as mcolors
-    COLORS = [
-        (1.0, 0.0, 0.0, 1.0),   # red
-        (0.0, 0.8, 0.0, 1.0),   # green
-        (0.0, 0.0, 1.0, 1.0),   # blue
-        (1.0, 0.8, 0.0, 1.0),   # yellow
-        (1.0, 0.0, 1.0, 1.0),   # magenta
-        (0.0, 1.0, 1.0, 1.0),   # cyan
-        (1.0, 0.5, 0.0, 1.0),   # orange
-        (0.5, 0.0, 1.0, 1.0),   # purple
-        (0.0, 0.5, 0.0, 1.0),   # dark green
-        (0.5, 0.0, 0.0, 1.0),   # dark red
-        (0.0, 0.0, 0.5, 1.0),   # dark blue
-        (0.8, 0.8, 0.0, 1.0),   # olive
-        (0.0, 0.8, 0.8, 1.0),   # teal
-        (0.8, 0.0, 0.8, 1.0),   # violet
-        (0.9, 0.6, 0.6, 1.0),   # pink
-        (0.6, 0.9, 0.6, 1.0),   # light green
-        (0.6, 0.6, 0.9, 1.0),   # light blue
-        (0.9, 0.9, 0.6, 1.0),   # light yellow
-        (0.6, 0.9, 0.9, 1.0),   # light cyan
-        (0.9, 0.6, 0.9, 1.0),   # light purple
-    ]
 
     model.eval()
     count = 0
+    saved_files = []
+
     if save_dir:
         os.makedirs(save_dir, exist_ok=True)
 
@@ -663,74 +680,122 @@ def visualize_predictions(
                 if count >= num_samples:
                     break
 
-                # Denormalize ảnh (ImageNet mean/std, khớp sbd_dataset.py)
+                # ── Denormalize về [0,1] RGB ──────────────────────
                 mean = torch.tensor([0.485, 0.456, 0.406]).view(3,1,1).to(device)
                 std  = torch.tensor([0.229, 0.224, 0.225]).view(3,1,1).to(device)
-                img_np = (img_t * std + mean).clamp(0,1).permute(1,2,0).cpu().numpy()
+                img_np = (img_t * std + mean).clamp(0, 1).permute(1,2,0).cpu().numpy()
                 H, W   = img_np.shape[:2]
 
-                fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-                axes[0].imshow(img_np)
-                axes[0].set_title("Input Image")
-                axes[0].axis("off")
-                axes[1].imshow(img_np)
-                axes[1].set_title("MVP-Seg Predictions")
-                axes[1].axis("off")
+                # ── Tạo canvas: 1 panel duy nhất ──────────────────
+                fig, ax = plt.subplots(1, 1, figsize=(7, 7))
+                fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
 
-                legend = []
-                for j in range(len(det["boxes"])):
+                # Vẽ ảnh gốc làm nền
+                ax.imshow(img_np, interpolation="bilinear")
+                ax.set_xlim(0, W)
+                ax.set_ylim(H, 0)
+                ax.axis("off")
+
+                n_det = len(det["boxes"])
+                legend_patches = []
+
+                for j in range(n_det):
+                    color  = _VIS_COLORS[j % len(_VIS_COLORS)]
                     cls_id = det["labels"][j].item()
                     score  = det["scores"][j].item()
-                    color = COLORS[j % 20]
 
-                    # BBox
-                    x1,y1,x2,y2 = det["boxes"][j].cpu().numpy()
-                    rect = mpatches.FancyBboxPatch(
-                        (x1,y1), x2-x1, y2-y1,
-                        linewidth=2, edgecolor=color, facecolor="none"
-                    )
-                    axes[1].add_patch(rect)
-                    axes[1].text(x1, max(y1-4, 0),
-                        f"{SBD_CLASS_NAMES[cls_id]} {score:.2f}",
-                        color="white", fontsize=7,
-                        bbox=dict(facecolor=color, alpha=0.75, pad=1)
-                    )
-
-                    # Mask — upsample lên kích thước ảnh rồi crop trong box
-                    pm = det["masks"][j]     # [Hp, Wp]
+                    # ── Upsample mask lên kích thước ảnh ──────────
+                    pm = det["masks"][j]          # [Hp, Wp]
                     pm = F.interpolate(
                         pm.unsqueeze(0).unsqueeze(0).to(device),
                         size=(H, W), mode="bilinear", align_corners=False
                     ).squeeze().cpu()
 
-                    # Crop mask ngoài vùng box (theo proposal trang 8)
+                    # Crop mask ngoài bounding box (proposal trang 8)
+                    x1, y1, x2, y2 = det["boxes"][j].cpu().numpy()
                     mask_bin = (pm > mask_thresh).float()
-                    x1i = max(0, int(x1))
-                    y1i = max(0, int(y1))
-                    x2i = min(W, int(x2))
-                    y2i = min(H, int(y2))
-                    crop = torch.zeros_like(mask_bin)
-                    crop[y1i:y2i, x1i:x2i] = mask_bin[y1i:y2i, x1i:x2i]
+                    x1i = max(0, int(x1));  y1i = max(0, int(y1))
+                    x2i = min(W, int(x2));  y2i = min(H, int(y2))
+                    cropped = torch.zeros_like(mask_bin)
+                    cropped[y1i:y2i, x1i:x2i] = mask_bin[y1i:y2i, x1i:x2i]
+                    mask_np = cropped.numpy().astype(bool)
 
-                    overlay = np.zeros((H, W, 4))
-                    overlay[crop.numpy() > 0] = [*color[:3], 0.45]
-                    axes[1].imshow(overlay)
+                    # ── Overlay màu bán trong suốt ─────────────────
+                    overlay = np.zeros((H, W, 4), dtype=np.float32)
+                    overlay[mask_np] = [*color, 0.45]
+                    ax.imshow(overlay, interpolation="nearest")
 
-                    legend.append(mpatches.Patch(color=color,
-                                                 label=SBD_CLASS_NAMES[cls_id]))
+                    # ── Contour viền mask ──────────────────────────
+                    ax.contour(
+                        mask_np.astype(np.uint8),
+                        levels=[0.5],
+                        colors=[color],
+                        linewidths=1.5,
+                    )
 
-                if legend:
-                    axes[1].legend(handles=legend, loc="upper right", fontsize=7)
+                    # ── Bounding box ───────────────────────────────
+                    rect = mpatches.FancyBboxPatch(
+                        (x1, y1), x2 - x1, y2 - y1,
+                        boxstyle="square,pad=0",
+                        linewidth=1.8,
+                        edgecolor=color,
+                        facecolor="none",
+                    )
+                    ax.add_patch(rect)
 
-                plt.tight_layout()
+                    # ── Label text ─────────────────────────────────
+                    label_str = f"{SBD_CLASS_NAMES[cls_id]}: {score:.2f}"
+                    ax.text(
+                        x1 + 2, max(y1 - 3, 6),
+                        label_str,
+                        fontsize=7.5, color="white", fontweight="bold",
+                        va="bottom",
+                        bbox=dict(
+                            facecolor=color, alpha=0.82,
+                            pad=1.5, edgecolor="none",
+                            boxstyle="round,pad=0.2"
+                        ),
+                    )
+
+                    legend_patches.append(
+                        mpatches.Patch(color=color, label=label_str)
+                    )
+
+                # ── Legend (tối đa 10 entries, 2 cột) ─────────────
+                if legend_patches:
+                    ax.legend(
+                        handles=legend_patches[:10],
+                        loc="upper right",
+                        fontsize=6.5,
+                        framealpha=0.65,
+                        ncol=2,
+                        handlelength=1.2,
+                        borderpad=0.5,
+                    )
+
+                # ── Lưu hoặc hiển thị ──────────────────────────────
                 if save_dir:
-                    path = os.path.join(save_dir, f"pred_{count:04d}.png")
-                    plt.savefig(path, dpi=100, bbox_inches="tight")
-                    print(f"  [Saved] {path}")
+                    fpath = os.path.join(save_dir, f"pred_{count:04d}.png")
+                    plt.savefig(fpath, dpi=150, bbox_inches="tight",
+                                pad_inches=0, facecolor="black")
+                    saved_files.append(fpath)
+                    print(f"  [Saved] {fpath}  ({n_det} detections)")
                 else:
                     plt.show()
+
                 plt.close(fig)
                 count += 1
+
+    print(f"\n[VIS] Đã vẽ {count} ảnh.")
+
+    # ── Zip toàn bộ thư mục kết quả ───────────────────────────────
+    if save_dir and zip_path and saved_files:
+        import zipfile
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for fpath in saved_files:
+                zf.write(fpath, arcname=os.path.basename(fpath))
+        size_kb = os.path.getsize(zip_path) / 1024
+        print(f"[VIS] Đã tạo zip: {zip_path}  ({size_kb:.1f} KB, {len(saved_files)} files)")
 
 
 # ════════════════════════════════════════════════════════════════
@@ -800,5 +865,6 @@ def eval(CONFIG):
             device       = device,
             num_samples  = CONFIG["num_vis"],
             score_thresh = CONFIG["vis_score_thr"],
-            save_dir     = CONFIG["save_vis_dir"],
+            save_dir     = CONFIG.get("save_vis_dir", None),
+            zip_path     = CONFIG.get("zip_path", None),
         )
