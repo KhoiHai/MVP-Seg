@@ -1,6 +1,7 @@
 import os
 import time
 import torch
+import zipfile
 import torch.nn.functional as F
 import numpy as np
 from pycocotools.coco import COCO
@@ -227,19 +228,41 @@ def evaluate(model_path, data_root, num_classes=80, device=None, img_size=550):
     print(f"Median  FPS : {np.median(fps_list):.1f}")
 
 @torch.no_grad()
-def generate_test_dev_json_from_folder(model_path, data_root, json_name="predictions_test2017.json", num_classes=80, device=None, img_size=550):
+def generate_test_dev_json(
+    model_path,
+    data_root,
+    ann_dir="/kaggle/working/annotations",
+    model_name="MVP-Seg",
+    num_classes=80,
+    device=None,
+    img_size=550
+):
+    """
+    Chạy inference trên COCO test-dev2017 và xuất file zip sẵn sàng submit lên CodaLab.
+ 
+    Args:
+        model_path : đường dẫn tới file checkpoint .pth
+        data_root  : thư mục chứa ảnh, phải có subfolder test2017/
+                     vd: "/kaggle/input/datasets/awsaf49/coco-2017-dataset/coco2017"
+        ann_dir    : thư mục chứa image_info_test-dev2017.json
+                     vd: "/kaggle/working/annotations"
+                     Tải về bằng:
+                       !wget http://images.cocodataset.org/annotations/image_info_test2017.zip -P /kaggle/working/
+                       !unzip -q /kaggle/working/image_info_test2017.zip -d /kaggle/working/
+        model_name : tên model, dùng để đặt tên file output
+    """
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f" Bắt đầu quét thư mục test2017 trên: {device}")
-
-    # 1. Khởi tạo Model
+    print(f"Bắt đầu generate test-dev2017 trên: {device}")
+ 
+    # ── 1. Load model ──────────────────────────────────────────────────────────
     model = MVP_Seg(
         model_name="nvidia/MambaVision-T-1K",
         pretrained=False,
         num_classes=num_classes,
         num_prototypes=32
     ).to(device)
-
+ 
     ckpt = torch.load(model_path, map_location=device, weights_only=False)
     if "model_state" in ckpt:
         model.load_state_dict(ckpt["model_state"])
@@ -247,20 +270,33 @@ def generate_test_dev_json_from_folder(model_path, data_root, json_name="predict
         model.load_state_dict(ckpt)
     model.eval()
     print(f"Đã tải trọng số từ: {model_path}")
-
-    # 2. Pipeline Transform
+ 
+    # ── 2. Transform ───────────────────────────────────────────────────────────
     transform = A.Compose([
         A.Resize(img_size, img_size),
         A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ToTensorV2()
     ])
-
-    # 3. Quét trực tiếp thư mục test2017
+ 
+    # ── 3. Lấy danh sách ảnh test-dev2017 từ annotation chính thức ────────────
+    ann_file = os.path.join(ann_dir, "image_info_test-dev2017.json")
+    if not os.path.exists(ann_file):
+        raise FileNotFoundError(
+            f"Không tìm thấy: {ann_file}\n"
+            "Chạy 2 lệnh sau trong Kaggle notebook rồi chạy lại:\n"
+            "  !wget http://images.cocodataset.org/annotations/image_info_test2017.zip -P /kaggle/working/\n"
+            "  !unzip -q /kaggle/working/image_info_test2017.zip -d /kaggle/working/"
+        )
+ 
+    with open(ann_file) as f:
+        img_info_data = json.load(f)
+ 
+    # Map file_name -> image_id (lấy từ annotation, không parse tên file)
+    img_id_map = {img["file_name"]: img["id"] for img in img_info_data["images"]}
+    img_filenames = sorted(img_id_map.keys())  # 20,288 ảnh
     test_dir = os.path.join(data_root, "test2017")
-    img_filenames = [f for f in os.listdir(test_dir) if f.endswith('.jpg')]
-
-    # Bảng ánh xạ nhãn: MVP-Seg (0-79) -> COCO category_id (1-90)
-    # Vì không dùng COCO API, ta phải hardcode mảng ID chuẩn của COCO
+ 
+    # Bảng ánh xạ nhãn: label index (0-79) -> COCO category_id (1-90)
     valid_ids = [
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
         24, 25, 27, 28, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 46, 47,
@@ -268,48 +304,55 @@ def generate_test_dev_json_from_folder(model_path, data_root, json_name="predict
         72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 84, 85, 86, 87, 88, 89, 90
     ]
     label_to_cat_id = {i: cat_id for i, cat_id in enumerate(valid_ids)}
-
+ 
+    # ── 4. Inference ───────────────────────────────────────────────────────────
     coco_preds = []
-    print(f"\n[INFO] Đang chạy Inference trên {len(img_filenames)} ảnh...")
-
+    print(f"\n[INFO] Đang chạy inference trên {len(img_filenames)} ảnh test-dev2017...")
+ 
     for i, filename in enumerate(img_filenames):
-        # Tách ID từ tên file (vd: '000000123456.jpg' -> 123456)
-        img_id = int(filename.split('.')[0])
+        img_id  = img_id_map[filename]   # lấy từ annotation, chính xác 100%
         img_path = os.path.join(test_dir, filename)
-
-        # Đọc ảnh gốc bằng PIL để lấy kích thước chuẩn xác
-        img_pil = Image.open(img_path).convert("RGB")
+ 
+        img_pil  = Image.open(img_path).convert("RGB")
         orig_w, orig_h = img_pil.size
         image_np = np.array(img_pil)
-
-        # Tiền xử lý
+ 
         tensor_img = transform(image=image_np)["image"].unsqueeze(0).to(device)
-
-        # Suy luận
-        outputs = model(tensor_img)
+        outputs    = model(tensor_img)
         detections = decode_predictions(outputs, img_size=img_size)[0]
-
-        boxes = detections["boxes"].cpu().numpy()
+ 
+        # Ảnh không có detection -> bỏ qua (không append gì)
+        if len(detections["scores"]) == 0:
+            if (i + 1) % 1000 == 0:
+                print(f"  Đã xử lý {i + 1}/{len(img_filenames)} ảnh...")
+            continue
+ 
+        boxes  = detections["boxes"].cpu().numpy()
         scores = detections["scores"].cpu().numpy()
         labels = detections["labels"].cpu().numpy()
-        masks = detections["masks"].cpu()
-
+        masks  = detections["masks"].cpu()
+ 
         scale_x = orig_w / img_size
         scale_y = orig_h / img_size
-
+ 
         for j in range(len(scores)):
             x1, y1, x2, y2 = boxes[j]
-
             x1 *= scale_x; x2 *= scale_x
             y1 *= scale_y; y2 *= scale_y
-
+ 
             w, h = x2 - x1, y2 - y1
-            if w <= 0 or h <= 0: continue
-
-            mask_tensor = masks[j].unsqueeze(0).unsqueeze(0).float()
-            orig_mask_tensor = F.interpolate(mask_tensor, size=(orig_h, orig_w), mode='bilinear', align_corners=False).squeeze()
+            if w <= 0 or h <= 0:
+                continue
+ 
+            # Resize mask về kích thước ảnh gốc
+            mask_tensor     = masks[j].unsqueeze(0).unsqueeze(0).float()
+            orig_mask_tensor = F.interpolate(
+                mask_tensor, size=(orig_h, orig_w),
+                mode='bilinear', align_corners=False
+            ).squeeze()
             orig_mask = (orig_mask_tensor > 0.5).cpu().numpy().astype(np.uint8)
-
+ 
+            # Crop mask theo bbox
             crop_x1 = max(0, int(np.floor(x1)))
             crop_y1 = max(0, int(np.floor(y1)))
             crop_x2 = min(orig_w, int(np.ceil(x2)))
@@ -318,29 +361,45 @@ def generate_test_dev_json_from_folder(model_path, data_root, json_name="predict
             orig_mask[crop_y2:, :] = 0
             orig_mask[:, :crop_x1] = 0
             orig_mask[:, crop_x2:] = 0
-
-            if orig_mask.sum() == 0: continue
-
+ 
+            if orig_mask.sum() == 0:
+                continue
+ 
             mask_rle = maskUtils.encode(np.asfortranarray(orig_mask))
             mask_rle['counts'] = mask_rle['counts'].decode('utf-8')
-
+ 
             coco_preds.append({
-                "image_id": img_id,
+                "image_id":    img_id,
                 "category_id": label_to_cat_id[int(labels[j])],
-                "bbox": [float(x1), float(y1), float(w), float(h)],
+                "bbox":        [float(x1), float(y1), float(w), float(h)],
                 "segmentation": mask_rle,
-                "score": float(scores[j])
+                "score":       float(scores[j])
             })
-
+ 
         if (i + 1) % 1000 == 0:
-            print(f" Đã xử lý {i + 1}/{len(img_filenames)} ảnh...")
-
-    # 4. Lưu JSON
-    save_json_path = os.path.join(os.path.dirname(model_path), json_name)
-    print(f"\n[INFO] Đang ghi {len(coco_preds)} dự đoán ra file JSON...")
-    with open(save_json_path, "w") as f:
+            print(f"  Đã xử lý {i + 1}/{len(img_filenames)} ảnh | Dự đoán tích lũy: {len(coco_preds)}")
+ 
+    print(f"\n[INFO] Tổng số dự đoán: {len(coco_preds)}")
+ 
+    # ── 5. Lưu JSON + tạo ZIP theo đúng naming convention của CodaLab ─────────
+    out_dir   = "/kaggle/working"
+    json_name = f"detections_test-dev2017_{model_name}_results.json"
+    zip_name  = f"detections_test-dev2017_{model_name}_results.json.zip"
+    json_path = os.path.join(out_dir, json_name)
+    zip_path  = os.path.join(out_dir, zip_name)
+ 
+    print(f"[INFO] Đang ghi JSON ra: {json_path}")
+    with open(json_path, "w") as f:
         json.dump(coco_preds, f)
-    print(f" Đã lưu file thành công tại: {save_json_path}")
+ 
+    # Tạo zip: file JSON nằm trực tiếp trong zip (không có subfolder)
+    print(f"[INFO] Đang tạo ZIP: {zip_path}")
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.write(json_path, arcname=json_name)
+ 
+    print(f"\n Xong! Nộp file sau lên CodaLab:")
+    print(f"   {zip_path}")
+    print(f"   URL: https://codalab.lisn.upsaclay.fr/competitions/7383")
 
 if __name__ == "__main__":
     evaluate(
