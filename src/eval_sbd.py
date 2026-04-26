@@ -655,7 +655,10 @@ def visualize_predictions(
     """
     import zipfile
     import matplotlib
-    matplotlib.use("Agg")          # backend không cần GUI — an toàn trên Kaggle/Colab
+    if save_dir:
+        matplotlib.use("Agg")
+    else:
+        matplotlib.use("TkAgg")   # hoặc "Qt5Agg" tuỳ môi trường
     import matplotlib.pyplot as plt
     import matplotlib.patches as mpatches
 
