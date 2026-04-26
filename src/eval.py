@@ -122,7 +122,7 @@ def evaluate(model_path, data_root, num_classes=80, device=None, img_size=550):
         num_prototypes=32
     ).to(device)
 
-    ckpt = torch.load(model_path, map_location=device)
+    ckpt = torch.load(model_path, map_location=device, weights_only=False)
     if "model_state" in ckpt:
         model.load_state_dict(ckpt["model_state"])
     else:
