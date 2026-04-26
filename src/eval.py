@@ -227,10 +227,10 @@ def evaluate(model_path, data_root, num_classes=80, device=None, img_size=550):
     print(f"Median  FPS : {np.median(fps_list):.1f}")
 
 @torch.no_grad()
-def generate_test_dev_json(model_path, data_root, json_name="predictions_test_dev.json", num_classes=80, device=None, img_size=550):
+def generate_test_dev_json_from_folder(model_path, data_root, json_name="predictions_test2017.json", num_classes=80, device=None, img_size=550):
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"🔥 Bắt đầu quá trình tạo JSON cho test-dev trên: {device}")
+    print(f" Bắt đầu quét thư mục test2017 trên: {device}")
 
     # 1. Khởi tạo Model
     model = MVP_Seg(
@@ -248,42 +248,47 @@ def generate_test_dev_json(model_path, data_root, json_name="predictions_test_de
     model.eval()
     print(f"Đã tải trọng số từ: {model_path}")
 
-    # 2. Nạp file info của test-dev (Chỉ có info, không có nhãn)
-    ann_file = os.path.join(data_root, "annotations/image_info_test-dev2017.json")
-    coco_test = COCO(ann_file)
-    img_ids = coco_test.getImgIds()
-    
-    # Ánh xạ label (0-79) sang category_id của COCO (1-90)
-    cat_ids = coco_test.getCatIds()
-    label_to_cat_id = {idx: cat_id for idx, cat_id in enumerate(cat_ids)}
-
-    # 3. Pipeline Transform thủ công cho ảnh test
+    # 2. Pipeline Transform
     transform = A.Compose([
         A.Resize(img_size, img_size),
         A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ToTensorV2()
     ])
 
+    # 3. Quét trực tiếp thư mục test2017
     test_dir = os.path.join(data_root, "test2017")
-    coco_preds = []
+    img_filenames = [f for f in os.listdir(test_dir) if f.endswith('.jpg')]
 
-    print(f"\n[INFO] Đang chạy Inference trên {len(img_ids)} ảnh test-dev...")
-    
-    for i, img_id in enumerate(img_ids):
-        img_info = coco_test.loadImgs(img_id)[0]
-        img_path = os.path.join(test_dir, img_info['file_name'])
-        
-        # Đọc ảnh gốc
-        image_np = np.array(Image.open(img_path).convert("RGB"))
-        orig_h, orig_w = img_info['height'], img_info['width']
-        
+    # Bảng ánh xạ nhãn: MVP-Seg (0-79) -> COCO category_id (1-90)
+    # Vì không dùng COCO API, ta phải hardcode mảng ID chuẩn của COCO
+    valid_ids = [
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+        24, 25, 27, 28, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 46, 47,
+        48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 67, 70,
+        72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 84, 85, 86, 87, 88, 89, 90
+    ]
+    label_to_cat_id = {i: cat_id for i, cat_id in enumerate(valid_ids)}
+
+    coco_preds = []
+    print(f"\n[INFO] Đang chạy Inference trên {len(img_filenames)} ảnh...")
+
+    for i, filename in enumerate(img_filenames):
+        # Tách ID từ tên file (vd: '000000123456.jpg' -> 123456)
+        img_id = int(filename.split('.')[0])
+        img_path = os.path.join(test_dir, filename)
+
+        # Đọc ảnh gốc bằng PIL để lấy kích thước chuẩn xác
+        img_pil = Image.open(img_path).convert("RGB")
+        orig_w, orig_h = img_pil.size
+        image_np = np.array(img_pil)
+
         # Tiền xử lý
         tensor_img = transform(image=image_np)["image"].unsqueeze(0).to(device)
-        
-        # Suy luận (Inference)
+
+        # Suy luận
         outputs = model(tensor_img)
         detections = decode_predictions(outputs, img_size=img_size)[0]
-        
+
         boxes = detections["boxes"].cpu().numpy()
         scores = detections["scores"].cpu().numpy()
         labels = detections["labels"].cpu().numpy()
@@ -294,18 +299,17 @@ def generate_test_dev_json(model_path, data_root, json_name="predictions_test_de
 
         for j in range(len(scores)):
             x1, y1, x2, y2 = boxes[j]
-            
+
             x1 *= scale_x; x2 *= scale_x
             y1 *= scale_y; y2 *= scale_y
-            
+
             w, h = x2 - x1, y2 - y1
             if w <= 0 or h <= 0: continue
-            
+
             mask_tensor = masks[j].unsqueeze(0).unsqueeze(0).float()
             orig_mask_tensor = F.interpolate(mask_tensor, size=(orig_h, orig_w), mode='bilinear', align_corners=False).squeeze()
             orig_mask = (orig_mask_tensor > 0.5).cpu().numpy().astype(np.uint8)
-            
-            # Gọt sạch nhiễu ngoài box để điểm AP cao nhất
+
             crop_x1 = max(0, int(np.floor(x1)))
             crop_y1 = max(0, int(np.floor(y1)))
             crop_x2 = min(orig_w, int(np.ceil(x2)))
@@ -314,10 +318,9 @@ def generate_test_dev_json(model_path, data_root, json_name="predictions_test_de
             orig_mask[crop_y2:, :] = 0
             orig_mask[:, :crop_x1] = 0
             orig_mask[:, crop_x2:] = 0
-            
+
             if orig_mask.sum() == 0: continue
-            
-            # Mã hóa RLE chuẩn COCO
+
             mask_rle = maskUtils.encode(np.asfortranarray(orig_mask))
             mask_rle['counts'] = mask_rle['counts'].decode('utf-8')
 
@@ -328,9 +331,9 @@ def generate_test_dev_json(model_path, data_root, json_name="predictions_test_de
                 "segmentation": mask_rle,
                 "score": float(scores[j])
             })
-            
+
         if (i + 1) % 1000 == 0:
-            print(f" Đã xử lý {i + 1}/{len(img_ids)} ảnh...")
+            print(f" Đã xử lý {i + 1}/{len(img_filenames)} ảnh...")
 
     # 4. Lưu JSON
     save_json_path = os.path.join(os.path.dirname(model_path), json_name)
